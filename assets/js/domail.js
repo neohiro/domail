@@ -58,6 +58,7 @@ let currentSub = 'account';
 let composeOpen = false;
 let composeDraftId = null;
 let composeDirty = false;
+let composeAttachments = [];
 let autosaveTimer = null;
 let pollTimer = null;
 let knownInbox = new Set();
@@ -415,6 +416,7 @@ function openCompose(opts = {}) {
   composeOpen = true;
   composeDraftId = null;
   composeDirty = false;
+  composeAttachments = [];
 
   el.cTo.value = addrListLabel(opts.to || []);
   el.cSubject.value = opts.subject || '';
@@ -547,6 +549,7 @@ async function sendCompose() {
       subject: c.subject,
       text: body,
       html: el.editor.innerHTML,
+      attachments: composeAttachments,
     }, 'outbox');
 
     if (composeDraftId) {
@@ -735,6 +738,9 @@ async function poll() {
     el.counts.inbox.textContent = String(inbox.length);
     el.counts.outbox.textContent = String(outbox.length);
     el.counts.inbox.closest('.tab').dataset.unread = String(inbox.some((m) => !m.read));
+
+    const totalBytes = JSON.stringify({ inbox, outbox }).length;
+    el.netstat.textContent = `${(totalBytes / 1024).toFixed(1)} KB · local`;
   } catch (e) {
     console.error('poll error:', e);
   }
@@ -886,8 +892,16 @@ function bindEvents() {
   el.emojiBtn.addEventListener('click', toggleEmoji);
   el.cAttach.addEventListener('click', () => el.cFile.click());
   el.cFile.addEventListener('change', async () => {
-    // attachments are read into the draft on send; for now just note them
-    toast(`${el.cFile.files.length} file(s) attached`);
+    const files = [...el.cFile.files];
+    if (!files.length) return;
+    const attachments = [];
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      attachments.push({ name: file.name, type: file.type || 'application/octet-stream', bytes });
+    }
+    composeAttachments.push(...attachments);
+    toast(`${attachments.length} file(s) attached`);
+    el.cFile.value = '';
   });
 
   for (const btn of $$('.format button[data-fmt]')) {
