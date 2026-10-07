@@ -57,7 +57,6 @@ let currentPage = 'inbox';
 let currentSub = 'account';
 let composeOpen = false;
 let composeDraftId = null;
-let composeWasEmpty = true;
 let composeDirty = false;
 let autosaveTimer = null;
 let pollTimer = null;
@@ -66,7 +65,6 @@ let knownOutbox = new Set();
 let knownDrafts = new Set();
 let emojiCat = 'smileys';
 let emojiSkin = '';
-let readerMsg = null;
 let audioCtx = null;
 let uiPrefs = { mode: 'dark', neon: null, accent: null, font: 'system', size: 18, autoSig: true, notify: false, sound: true, pollMs: POLL_MS };
 
@@ -146,6 +144,28 @@ function escapeHtml(s) {
   }[c]));
 }
 
+/**
+ * Sanitize HTML email body to prevent XSS.
+ * Removes script tags, event handlers, and javascript: URLs.
+ */
+function sanitizeHtml(html) {
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    doc.querySelectorAll('script, iframe, object, embed, link, meta, style').forEach((el) => el.remove());
+    doc.querySelectorAll('*').forEach((el) => {
+      for (const attr of [...el.attributes]) {
+        if (attr.name.startsWith('on')) el.removeAttribute(attr.name);
+        if ((attr.name === 'href' || attr.name === 'src') && /^\s*javascript:/i.test(attr.value)) {
+          el.removeAttribute(attr.name);
+        }
+      }
+    });
+    return doc.body.innerHTML;
+  } catch {
+    return escapeHtml(html);
+  }
+}
+
 function download(filename, text) {
   const blob = new Blob([text], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -204,6 +224,9 @@ function applyUiPrefs() {
  * ------------------------------------------------------------------ */
 
 async function generateIdentity(name, local, domain) {
+  if (!crypto.subtle) {
+    throw new Error('WebCrypto not available — use HTTPS or localhost');
+  }
   const ed = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
   const x = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
   const edPub = new Uint8Array(await crypto.subtle.exportKey('raw', ed.publicKey));
@@ -311,7 +334,6 @@ async function refreshAll() {
 async function openReader(box, id) {
   const m = await engine.get(box, id);
   if (!m) return;
-  readerMsg = { box, id };
 
   if (box === 'inbox' && !m.read) {
     const rows = await engine.list('inbox');
@@ -332,7 +354,7 @@ async function openReader(box, id) {
   div.className = 'reader';
   const who = box === 'inbox' ? addrListLabel(m.from) : addrListLabel(m.to);
   const body = m.bodyIsHtml
-    ? m.bodyText
+    ? sanitizeHtml(m.bodyText)
     : escapeHtml(m.bodyText || '').replace(/\n/g, '<br>');
 
   div.innerHTML = `
@@ -370,7 +392,6 @@ async function openReader(box, id) {
 }
 
 function closeReader() {
-  readerMsg = null;
   for (const page of el.pages) {
     const r = page.querySelector('.reader');
     if (r) r.remove();
@@ -384,7 +405,6 @@ function closeReader() {
 function openCompose(opts = {}) {
   composeOpen = true;
   composeDraftId = null;
-  composeWasEmpty = true;
   composeDirty = false;
 
   el.cTo.value = addrListLabel(opts.to || []);
@@ -442,7 +462,6 @@ async function saveDraft() {
       await engine.remove('drafts', composeDraftId);
       knownDrafts.delete(composeDraftId);
       composeDraftId = null;
-      composeWasEmpty = true;
       await refreshList('drafts');
     }
     el.draftState.textContent = 'draft autosaves';
@@ -474,7 +493,6 @@ async function saveDraft() {
 
   if (!composeDraftId) {
     composeDraftId = draft.id;
-    composeWasEmpty = false;
   }
   knownDrafts.add(draft.id);
   composeDirty = false;
@@ -500,27 +518,31 @@ async function sendCompose() {
     return;
   }
 
-  const sig = uiPrefs.autoSig ? await engine.store.get('signature') : '';
-  const body = sig ? `${c.text}\n\n${sig}` : c.text;
+  try {
+    const sig = uiPrefs.autoSig ? await engine.store.get('signature') : '';
+    const body = sig ? `${c.text}\n\n${sig}` : c.text;
 
-  await engine.send({
-    to,
-    cc: parseAddr(c.cc),
-    bcc: parseAddr(c.bcc),
-    subject: c.subject,
-    text: body,
-    html: el.editor.innerHTML,
-  }, 'outbox');
+    await engine.send({
+      to,
+      cc: parseAddr(c.cc),
+      bcc: parseAddr(c.bcc),
+      subject: c.subject,
+      text: body,
+      html: el.editor.innerHTML,
+    }, 'outbox');
 
-  if (composeDraftId) {
-    await engine.remove('drafts', composeDraftId);
-    knownDrafts.delete(composeDraftId);
+    if (composeDraftId) {
+      await engine.remove('drafts', composeDraftId);
+      knownDrafts.delete(composeDraftId);
+    }
+
+    closeCompose();
+    toast('Sent');
+    await refreshAll();
+    showPage('outbox');
+  } catch (e) {
+    toast(`Send failed: ${e.message}`);
   }
-
-  closeCompose();
-  toast('Sent');
-  await refreshAll();
-  showPage('outbox');
 }
 
 /* ------------------------------------------------------------------ *
@@ -751,17 +773,21 @@ async function refreshContacts() {
  * ------------------------------------------------------------------ */
 
 async function wipeIdentity() {
-  await engine.wipe();
-  stopPolling();
-  knownInbox.clear();
-  knownOutbox.clear();
-  knownDrafts.clear();
-  el.identity.textContent = 'no identity';
-  el.keyView.textContent = '';
-  await refreshAll();
-  showPage('inboard');
-  showOnboarding();
-  toast('Identity wiped');
+  try {
+    await engine.wipe();
+    stopPolling();
+    knownInbox.clear();
+    knownOutbox.clear();
+    knownDrafts.clear();
+    el.identity.textContent = 'no identity';
+    el.keyView.textContent = '';
+    await refreshAll();
+    showPage('inbox');
+    showOnboarding();
+    toast('Identity wiped');
+  } catch (e) {
+    toast(`Wipe failed: ${e.message}`);
+  }
 }
 
 /* ------------------------------------------------------------------ *

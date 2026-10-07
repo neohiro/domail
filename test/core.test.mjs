@@ -27,7 +27,7 @@ import {
   preferredPart,
   collectAttachments,
   encodeBase64Body,
-  decodeBodyBody,
+  decodeBase64Body,
   splitMessage,
 } from '../core/mail.mjs';
 
@@ -441,8 +441,8 @@ test('wipe leaves no residue in the raw backing map', async () => {
   await e.setIdentity(ID);
   await e.send({ to: [{ address: ID.address }], subject: 'gone', text: 'x' });
   await e.wipe();
-  const leftover = [...store.map.entries()].filter(
-    ([, v]) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0),
+  const leftover = Object.values(await store.serialize()).filter(
+    (v) => v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0),
   );
   assert.deepEqual(leftover, [], `residue: ${JSON.stringify(leftover)}`);
 });
@@ -482,4 +482,122 @@ test('indexedDbStore is exported and inert outside a browser', () => {
   const s = indexedDbStore();
   assert.equal(typeof s.get, 'function');
   assert.equal(typeof s.destroy, 'function');
+});
+
+/* ---------------- security: header injection ---------------- */
+
+test('CRLF in subject is stripped to prevent header injection', () => {
+  const raw = buildMessage({
+    from: ID,
+    to: [{ address: 'a@b.c' }],
+    subject: 'Hello\r\nBcc: evil@x.com',
+    text: 'body',
+  });
+  assert.ok(!raw.includes('evil@x.com'), 'injected header must not appear');
+  assert.ok(!/^Bcc:/m.test(raw), 'no injected Bcc header');
+});
+
+test('CRLF in address name is stripped', () => {
+  const raw = buildMessage({
+    from: { name: 'Nova\r\nBcc: evil@x.com', address: 'n@d.invalid' },
+    to: [{ address: 'a@b.c' }],
+    subject: 'x',
+    text: 'y',
+  });
+  assert.ok(!/^Bcc:/m.test(raw), 'no injected Bcc header');
+  assert.ok(!/\r\nBcc:/.test(raw), 'no CRLF injection');
+});
+
+test('CRLF in address value is stripped', () => {
+  const raw = buildMessage({
+    from: ID,
+    to: [{ address: 'a@b.c\r\nBcc: evil@x.com' }],
+    subject: 'x',
+    text: 'y',
+  });
+  assert.ok(!/^Bcc:/m.test(raw), 'no injected Bcc header');
+  assert.ok(!/\r\nBcc:/.test(raw), 'no CRLF injection');
+});
+
+/* ---------------- splitMultipart regex ---------------- */
+
+test('splitMultipart handles trailing tab after boundary', () => {
+  const boundary = '----=_test';
+  const body = `--${boundary}\r\nContent-Type: text/plain\r\n\r\nhello\r\n--${boundary}--`;
+  const parts = splitMultipart(body, boundary);
+  assert.equal(parts.length, 1);
+  assert.ok(parts[0].includes('hello'));
+});
+
+/* ---------------- dotStuff LF handling ---------------- */
+
+test('dotStuff handles LF-only input', () => {
+  const lf = 'a\n.hidden\nb';
+  const stuffed = dotStuff(lf);
+  assert.ok(stuffed.includes('\r\n..hidden'));
+  assert.equal(undotStuff(stuffed), 'a\r\n.hidden\r\nb');
+});
+
+/* ---------------- wipe with signature and alias ---------------- */
+
+test('wipe clears signature and alias keys', async () => {
+  const { e, store } = engineWith();
+  await e.setIdentity(ID);
+  await e.send({ to: [{ address: ID.address }], subject: 'a', text: 'a' });
+  await store.set('signature', 'my signature');
+  await store.set('mbox:alias:test@domail.space', [{ id: 'x' }]);
+
+  await e.wipe();
+
+  assert.equal(await store.get('signature'), undefined);
+  assert.equal(await store.get('mbox:alias:test@domail.space'), undefined);
+  assert.equal(await store.get('identity'), undefined);
+});
+
+/* ---------------- memoryStore encapsulation ---------------- */
+
+test('memoryStore does not expose internal map', () => {
+  const store = memoryStore();
+  assert.equal(store.map, undefined, 'map must not be publicly accessible');
+  assert.equal(typeof store.clear, 'function');
+  assert.equal(typeof store.serialize, 'function');
+});
+
+test('memoryStore serialize returns a copy', async () => {
+  const store = memoryStore();
+  await store.set('k', { list: [1, 2] });
+  const snap = await store.serialize();
+  snap.k.list.push(3);
+  const again = await store.get('k');
+  assert.deepEqual(again.list, [1, 2]);
+});
+
+/* ---------------- base64 performance ---------------- */
+
+test('bytesToBase64 handles large input efficiently', () => {
+  const bytes = new Uint8Array(100000).map((_, i) => i & 0xff);
+  const start = Date.now();
+  const b64 = bytesToBase64(bytes);
+  const elapsed = Date.now() - start;
+  assert.ok(elapsed < 1000, `took ${elapsed}ms`);
+  assert.equal(base64ToBytes(b64).length, bytes.length);
+});
+
+/* ---------------- deliver alias routing ---------------- */
+
+test('deliver creates alias for non-identity local address', async () => {
+  const store = memoryStore();
+  const e = new MailEngine(store);
+  e.identity = { name: 'Nova', address: 'nova@domail.space', domain: 'domail.space' };
+  await e.deliver(
+    buildMessage({
+      from: { address: 'x@y.z' },
+      to: [{ address: 'other@domail.space' }],
+      subject: 'alias test',
+      text: 'x',
+    }),
+  );
+  const alias = await e.list('alias:other@domail.space');
+  assert.equal(alias.length, 1);
+  assert.equal(alias[0].subject, 'alias test');
 });
