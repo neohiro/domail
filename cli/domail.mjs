@@ -31,8 +31,9 @@ function loadStore() {
   return memoryStore();
 }
 
-function saveStore(store) {
-  writeFileSync(DATA_FILE, JSON.stringify(Object.fromEntries(store.map), null, 2));
+async function saveStore(store) {
+  const data = await store.serialize();
+  writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
 function createEngine() {

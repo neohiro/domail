@@ -268,6 +268,11 @@ async function createIdentity() {
  * ------------------------------------------------------------------ */
 
 function showPage(name) {
+  const validPages = ['inbox', 'outbox', 'drafts', 'settings', 'wipe'];
+  if (!validPages.includes(name)) {
+    console.error('Invalid page:', name);
+    return;
+  }
   currentPage = name;
   for (const tab of el.tabs) {
     tab.setAttribute('aria-selected', String(tab.dataset.page === name));
@@ -296,6 +301,7 @@ function showSub(name) {
  * ------------------------------------------------------------------ */
 
 async function refreshList(box) {
+  if (!engine) return;
   const rows = await engine.list(box);
   const listEl = el.lists[box];
   const emptyEl = $(`[data-empty="${box}"]`);
@@ -333,7 +339,10 @@ async function refreshAll() {
 
 async function openReader(box, id) {
   const m = await engine.get(box, id);
-  if (!m) return;
+  if (!m) {
+    toast('Message not found');
+    return;
+  }
 
   if (box === 'inbox' && !m.read) {
     const rows = await engine.list('inbox');
@@ -454,55 +463,64 @@ function scheduleAutosave() {
 
 async function saveDraft() {
   if (!composeOpen) return;
-  const c = getComposeContent();
-  const isEmpty = !c.to && !c.subject && !c.text.trim();
+  try {
+    const c = getComposeContent();
+    const isEmpty = !c.to && !c.subject && !c.text.trim();
 
-  if (isEmpty) {
-    if (composeDraftId) {
-      await engine.remove('drafts', composeDraftId);
-      knownDrafts.delete(composeDraftId);
-      composeDraftId = null;
-      await refreshList('drafts');
+    if (isEmpty) {
+      if (composeDraftId) {
+        await engine.remove('drafts', composeDraftId);
+        knownDrafts.delete(composeDraftId);
+        composeDraftId = null;
+        await refreshList('drafts');
+      }
+      el.draftState.textContent = 'draft autosaves';
+      return;
     }
-    el.draftState.textContent = 'draft autosaves';
-    return;
+
+    const draft = {
+      id: composeDraftId || makeMessageId(),
+      subject: c.subject,
+      from: engine.identity ? [engine.identity] : [],
+      to: parseAddr(c.to),
+      cc: parseAddr(c.cc),
+      bcc: parseAddr(c.bcc),
+      date: Date.now(),
+      bodyText: c.text,
+      bodyIsHtml: true,
+      attachments: [],
+      inReplyTo: el.compose.dataset.replyTo || '',
+      read: true,
+      flagged: false,
+      raw: '',
+    };
+
+    const rows = await engine.list('drafts');
+    const idx = rows.findIndex((r) => r.id === draft.id);
+    if (idx === -1) rows.push(draft);
+    else rows[idx] = draft;
+    await engine.store.set('mbox:drafts', rows);
+
+    if (!composeDraftId) {
+      composeDraftId = draft.id;
+    }
+    knownDrafts.add(draft.id);
+    composeDirty = false;
+    el.draftState.textContent = `saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    await refreshList('drafts');
+  } catch (e) {
+    el.draftState.textContent = 'draft save failed';
+    console.error('saveDraft error:', e);
   }
-
-  const draft = {
-    id: composeDraftId || makeMessageId(),
-    subject: c.subject,
-    from: engine.identity ? [engine.identity] : [],
-    to: parseAddr(c.to),
-    cc: parseAddr(c.cc),
-    bcc: parseAddr(c.bcc),
-    date: Date.now(),
-    bodyText: c.text,
-    bodyIsHtml: true,
-    attachments: [],
-    inReplyTo: el.compose.dataset.replyTo || '',
-    read: true,
-    flagged: false,
-    raw: '',
-  };
-
-  const rows = await engine.list('drafts');
-  const idx = rows.findIndex((r) => r.id === draft.id);
-  if (idx === -1) rows.push(draft);
-  else rows[idx] = draft;
-  await engine.store.set('mbox:drafts', rows);
-
-  if (!composeDraftId) {
-    composeDraftId = draft.id;
-  }
-  knownDrafts.add(draft.id);
-  composeDirty = false;
-  el.draftState.textContent = `saved ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  await refreshList('drafts');
 }
 
 function parseAddr(val) {
   if (!val) return [];
-  return val.split(',').map((s) => s.trim()).filter(Boolean).map((address) => ({ name: '', address }));
+  return val.split(',').map((s) => s.trim()).filter(Boolean).map((address) => {
+    const clean = address.replace(/[<>"']/g, '');
+    if (!clean || clean.includes(' ')) return null;
+    return { name: '', address: clean };
+  }).filter(Boolean);
 }
 
 async function sendCompose() {
@@ -646,20 +664,24 @@ function ensureAudio() {
 
 function playChime() {
   if (!uiPrefs.sound) return;
-  ensureAudio();
-  if (!audioCtx) return;
-  const t = audioCtx.currentTime;
-  for (const [freq, start, dur] of [[880, 0, 0.12], [1174.66, 0.1, 0.18]]) {
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0, t + start);
-    gain.gain.linearRampToValueAtTime(0.18, t + start + 0.01);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + start + dur);
-    osc.connect(gain).connect(audioCtx.destination);
-    osc.start(t + start);
-    osc.stop(t + start + dur + 0.02);
+  try {
+    ensureAudio();
+    if (!audioCtx) return;
+    const t = audioCtx.currentTime;
+    for (const [freq, start, dur] of [[880, 0, 0.12], [1174.66, 0.1, 0.18]]) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0, t + start);
+      gain.gain.linearRampToValueAtTime(0.18, t + start + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + start + dur);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(t + start);
+      osc.stop(t + start + dur + 0.02);
+    }
+  } catch (e) {
+    console.error('playChime error:', e);
   }
 }
 
@@ -713,7 +735,9 @@ async function poll() {
     el.counts.inbox.textContent = String(inbox.length);
     el.counts.outbox.textContent = String(outbox.length);
     el.counts.inbox.closest('.tab').dataset.unread = String(inbox.some((m) => !m.read));
-  } catch {}
+  } catch (e) {
+    console.error('poll error:', e);
+  }
 }
 
 function startPolling() {
@@ -745,6 +769,9 @@ async function importData(file) {
   try {
     const text = await readFile(file);
     const data = JSON.parse(text);
+    if (!data || data.format !== 'domail/1') {
+      throw new Error('Not a DOM Mail export file');
+    }
     await engine.import(data);
     el.identity.textContent = engine.identity ? engine.identity.address : 'no identity';
     if (engine.identity) el.keyView.textContent = publicKeyBlock(engine.identity);
