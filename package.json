@@ -1,0 +1,11 @@
+{
+  "name": "domail",
+  "version": "1.0.0",
+  "description": "A local mail engine that runs entirely in your browser tab.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test test/core.test.mjs",
+    "cli": "node cli/domail.mjs"
+  }
+}

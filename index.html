@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DOM Mail</title>
+<meta name="description" content="A local mail engine that runs entirely in your browser tab. No server, no account, no trace.">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#101012">
+<meta property="og:title" content="DOM Mail">
+<meta property="og:description" content="A local mail engine that runs entirely in your browser tab.">
+<meta property="og:type" content="website">
+<link rel="stylesheet" href="assets/css/domail.css">
+<script>
+/* Theme is applied before first paint so there is never a flash of the
+   wrong palette. This is the only script that runs synchronously. */
+(function () {
+  try {
+    var s = JSON.parse(localStorage.getItem('domail:ui') || '{}');
+    var r = document.documentElement;
+    r.dataset.mode = s.mode || 'dark';
+    if (s.neon) r.style.setProperty('--neon', s.neon);
+    if (s.accent) r.style.setProperty('--accent', s.accent);
+    if (s.font) r.dataset.font = s.font;
+  } catch (e) {}
+})();
+</script>
+</head>
+<body>
+
+<a class="skip" href="#view">Skip to mail</a>
+
+<!-- ============================ chrome: top 25% ============================ -->
+<header id="chrome">
+  <div class="chrome-row">
+    <div class="chrome-left">
+      <button id="modeSwitch" class="round" type="button" aria-label="Toggle light or dark mode" aria-pressed="false" title="Light / dark">
+        <span class="round-knob"></span>
+      </button>
+      <button id="overhaul" class="round" type="button" aria-label="Random full style overhaul" title="Style overhaul">
+        <span class="round-knob glyph">&#9670;</span>
+      </button>
+      <span class="brand">
+        <img src="assets/img/logo.svg" alt="" width="18" height="18" aria-hidden="true">
+        DOM Mail
+      </span>
+    </div>
+
+    <nav class="tabs" aria-label="Mailboxes">
+      <button class="tab" data-page="inbox"   type="button">Inbox <span class="count" data-count="inbox">0</span></button>
+      <button class="tab" data-page="outbox"  type="button">Outbox <span class="count" data-count="outbox">0</span></button>
+      <button class="tab" data-page="drafts"  type="button">Drafts <span class="count" data-count="drafts">0</span></button>
+      <button class="tab" data-page="settings" type="button">Settings</button>
+      <button class="tab tab-danger" data-page="wipe" type="button">Wipe</button>
+    </nav>
+  </div>
+
+  <div class="chrome-row chrome-row--id">
+    <span id="identity" class="identity" title="This session's address">no identity</span>
+    <span class="spacer"></span>
+    <button id="soundToggle" class="pill" type="button" aria-pressed="false" title="Notification sound">sound</button>
+    <button id="notifyToggle" class="pill" type="button" title="Native notifications">notify</button>
+    <span id="netstat" class="pill pill--quiet" title="Bytes fetched and no server contact">0 KB &middot; local</span>
+  </div>
+</header>
+
+<!-- ============================ view: bottom 75% ============================ -->
+<main id="view">
+
+  <section class="page" data-page="inbox" hidden>
+    <div class="page-head"><h1>Inbox</h1></div>
+    <ul class="list" id="list-inbox"></ul>
+    <p class="empty" data-empty="inbox">Nothing here. That is the good state.</p>
+  </section>
+
+  <section class="page" data-page="outbox" hidden>
+    <div class="page-head"><h1>Outbox</h1></div>
+    <ul class="list" id="list-outbox"></ul>
+    <p class="empty" data-empty="outbox">Nothing sent yet.</p>
+  </section>
+
+  <section class="page" data-page="drafts" hidden>
+    <div class="page-head"><h1>Drafts</h1></div>
+    <ul class="list" id="list-drafts"></ul>
+    <p class="empty" data-empty="drafts">No drafts.</p>
+  </section>
+
+  <!-- settings: three sliding sub-pages -->
+  <section class="page page--settings" data-page="settings" hidden>
+    <div class="page-head">
+      <h1>Settings</h1>
+      <div class="subtabs" role="tablist" aria-label="Settings pages">
+        <button class="subtab" data-sub="account" type="button" role="tab">Account</button>
+        <button class="subtab" data-sub="compose" type="button" role="tab">Compose</button>
+        <button class="subtab" data-sub="data" type="button" role="tab">Data</button>
+      </div>
+    </div>
+
+    <div class="subpage" data-sub="account">
+      <label class="field"><span>Display name</span>
+        <input id="setName" type="text" autocomplete="off" spellcheck="false" placeholder="Nova">
+      </label>
+      <label class="field"><span>Local part</span>
+        <input id="setLocal" type="text" autocomplete="off" spellcheck="false" placeholder="nova">
+      </label>
+      <label class="field"><span>Domain</span>
+        <input id="setDomain" type="text" autocomplete="off" spellcheck="false" placeholder="mx.dmail.link">
+      </label>
+      <label class="field"><span>Signature</span>
+        <textarea id="setSig" rows="4" placeholder="Sent from a tab that does not exist."></textarea>
+      </label>
+      <div class="row">
+        <button id="regenDomain" class="pill" type="button">New domain</button>
+        <button id="copyKey" class="pill" type="button">Copy public key</button>
+      </div>
+      <pre id="keyView" class="keyview" aria-label="Public key for this session"></pre>
+    </div>
+
+    <div class="subpage" data-sub="compose" hidden>
+      <label class="field"><span>Font</span>
+        <select id="setFont">
+          <option value="system">System (zero network)</option>
+          <option value="inter">Inter</option>
+          <option value="jetbrains">JetBrains Mono</option>
+        </select>
+      </label>
+      <label class="field"><span>Base font size</span>
+        <input id="setSize" type="range" min="14" max="26" step="1">
+        <output id="setSizeOut"></output>
+      </label>
+      <label class="check"><input id="setAutoSig" type="checkbox"> Append signature to new mail</label>
+      <label class="check"><input id="setNotify" type="checkbox"> Native notification on new mail</label>
+      <label class="check"><input id="setSound" type="checkbox"> Sound on new mail</label>
+    </div>
+
+    <div class="subpage" data-sub="data" hidden>
+      <div class="row">
+        <button id="expSettings" class="pill" type="button">Export settings</button>
+        <button id="expAll" class="pill" type="button">Export settings + mail</button>
+      </div>
+      <div class="row">
+        <label class="pill pill--file">Import<input id="impAll" type="file" accept="application/json" hidden></label>
+      </div>
+      <h2 class="minor">Contacts</h2>
+      <ul class="contacts" id="contactList"></ul>
+      <p class="empty" data-empty="contacts">No contacts learned yet.</p>
+    </div>
+  </section>
+
+  <!-- the wipe tab: hero + one fat red button -->
+  <section class="page page--wipe" data-page="wipe" hidden>
+    <div class="hero">
+      <h1>This tab holds a mail identity.</h1>
+      <p>Wiping destroys the identity, every message, every draft and every contact. It then deletes the storage itself. There is no recovery, no backup taken first, and no copy left in this browser.</p>
+      <button id="wipeBtn" class="nuke" type="button">Wipe this identity</button>
+      <p class="minor">Everything else in the tab keeps working. Only mail is destroyed.</p>
+    </div>
+  </section>
+</main>
+
+<!-- ============================ compose modal ============================ -->
+<div id="compose" class="modal" hidden>
+  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Compose">
+    <div class="addr">
+      <div class="addr-row"><label for="cTo">To</label>
+        <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="someone@domain, other@domain">
+      </div>
+      <div class="addr-row" data-extra hidden><label for="cCc">Cc</label>
+        <input id="cCc" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="addr-row" data-extra hidden><label for="cBcc">Bcc</label>
+        <input id="cBcc" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="addr-row"><label for="cSubject">Subject</label>
+        <input id="cSubject" type="text" autocomplete="off" spellcheck="false">
+      </div>
+    </div>
+
+    <div class="format" role="toolbar" aria-label="Formatting">
+      <button data-fmt="bold" type="button" title="Bold"><b>B</b></button>
+      <button data-fmt="italic" type="button" title="Italic"><i>I</i></button>
+      <button data-fmt="underline" type="button" title="Underline"><u>U</u></button>
+      <button data-fmt="strike" type="button" title="Strikethrough"><s>S</s></button>
+      <span class="sep"></span>
+      <select id="cSize" title="Font size, in real points" aria-label="Font size"></select>
+      <select id="cFont" title="Font" aria-label="Font">
+        <option value="inherit">inherit</option>
+        <option value="serif">serif</option>
+        <option value="monospace">mono</option>
+      </select>
+      <input id="cColor" type="color" value="#101012" title="Text colour" aria-label="Text colour">
+      <input id="cBg" type="color" value="#ffffff" title="Highlight" aria-label="Highlight colour">
+      <span class="sep"></span>
+      <button id="emojiBtn" type="button" title="Emoji" aria-haspopup="true" aria-expanded="false">☺</button>
+      <button id="cAttach" type="button" title="Attach">📎</button>
+      <input id="cFile" type="file" multiple hidden>
+    </div>
+
+    <div id="emoji" class="emoji" hidden role="dialog" aria-label="Emoji picker">
+      <div class="emoji-cats" role="tablist"></div>
+      <div class="emoji-skin" role="radiogroup" aria-label="Skin tone">
+        <button data-skin="default" type="button" aria-label="Default" class="on">◻</button>
+        <button data-skin="1F3FB" type="button" aria-label="Light">🏻</button>
+        <button data-skin="1F3FC" type="button" aria-label="Medium light">🏼</button>
+        <button data-skin="1F3FD" type="button" aria-label="Medium">🏽</button>
+        <button data-skin="1F3FE" type="button" aria-label="Medium dark">🏾</button>
+        <button data-skin="1F3FF" type="button" aria-label="Dark">🏿</button>
+      </div>
+      <div class="emoji-grid"></div>
+    </div>
+
+    <div id="editor" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" spellcheck="true"></div>
+
+    <div class="compose-foot">
+      <span id="draftState" class="minor">draft autosaves</span>
+      <span class="spacer"></span>
+      <button id="cClose" class="pill" type="button">Close</button>
+      <button id="cDiscard" class="pill" type="button">Discard</button>
+      <button id="cSend" class="pill pill--go" type="button">Send</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ onboarding: the one button ============================ -->
+<div id="onboard" class="modal modal--solo" hidden>
+  <div class="solo">
+    <img src="assets/img/logo.svg" alt="" width="56" height="56" aria-hidden="true">
+    <h1>DOM Mail</h1>
+    <p>A mail engine that lives in this tab and nowhere else. No account, no server, no record of you.</p>
+    <button id="createBtn" class="create" type="button">Create mail account</button>
+    <p class="minor">Or <button id="importBtn" class="linkbtn" type="button">restore from an export</button></p>
+    <input id="onboardImport" type="file" accept="application/json" hidden>
+  </div>
+</div>
+
+<!-- ============================ validation: 4th page, transient ============================ -->
+<div id="validate" class="modal" hidden>
+  <div class="validate" role="alertdialog" aria-modal="true" aria-labelledby="vTitle">
+    <h2 id="vTitle">Check this</h2>
+    <ul id="vList"></ul>
+    <button id="vOk" class="pill pill--go" type="button">Back</button>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script type="module" src="assets/js/domail.js"></script>
+<noscript><p style="padding:2rem">DOM Mail needs JavaScript: the mail engine runs in the page.</p></noscript>
+</body>
+</html>

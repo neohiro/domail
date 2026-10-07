@@ -1,0 +1,16 @@
+{
+  "name": "DOM Mail",
+  "short_name": "DOMail",
+  "description": "A local mail engine that runs entirely in your browser tab.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101012",
+  "theme_color": "#101012",
+  "icons": [
+    {
+      "src": "assets/img/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
