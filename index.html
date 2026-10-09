@@ -7,9 +7,9 @@
 <meta name="description" content="A local mail engine that runs entirely in your browser tab. No server, no account, no trace.">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#101012">
 <link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
-<meta name="theme-color" content="#101012">
 <meta property="og:title" content="DOM Mail">
 <meta property="og:description" content="A local mail engine that runs entirely in your browser tab.">
 <meta property="og:type" content="website">
@@ -27,11 +27,41 @@
     if (s.font) r.dataset.font = s.font;
   } catch (e) {}
 })();
+/* Register Service Worker for offline-first operation */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function() {
+    navigator.serviceWorker.register('/sw.js', { scope: '/' })
+      .then(function(reg) { console.log('[DOM Mail] SW registered:', reg.scope); })
+      .catch(function(err) { console.log('[DOM Mail] SW registration failed:', err); });
+  });
+}
+
+/* Load libsodium for WebCrypto (Argon2id, XChaCha20-Poly1305) */
+var libsodiumLoaded = false;
+function loadLibsodium() {
+  if (libsodiumLoaded) return Promise.resolve();
+  libsodiumLoaded = true;
+  return new Promise(function(resolve, reject) {
+    var script = document.createElement('script');
+    script.src = 'libsodium.js';
+    script.onload = function() { resolve(); };
+    script.onerror = function() { reject(new Error('Failed to load libsodium.js')); };
+    document.head.appendChild(script);
+  });
+}
+loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load error:', e); });
 </script>
 </head>
 <body>
 
 <a class="skip" href="#view">Skip to mail</a>
+
+<!-- Legal warning banner - unobtrusive, hacker culture -->
+<div id="legalBanner" class="legal-banner" role="status" aria-live="polite">
+  <span class="legal-icon">⚠</span>
+  <span class="legal-text">This software is provided for privacy and security research. You are solely responsible for your actions. No malevolent use intended. No bullies serviced.</span>
+  <button id="legalDismiss" class="legal-dismiss" type="button" aria-label="Dismiss warning">×</button>
+</div>
 
 <!-- ============================ chrome: top 25% ============================ -->
 <header id="chrome">
@@ -50,6 +80,7 @@
     </div>
 
     <nav class="tabs" aria-label="Mailboxes">
+      <button class="tab" data-page="compose" type="button" aria-selected="true">Compose</button>
       <button class="tab" data-page="inbox"   type="button">Inbox <span class="count" data-count="inbox">0</span></button>
       <button class="tab" data-page="outbox"  type="button">Outbox <span class="count" data-count="outbox">0</span></button>
       <button class="tab" data-page="drafts"  type="button">Drafts <span class="count" data-count="drafts">0</span></button>
@@ -63,12 +94,75 @@
     <span class="spacer"></span>
     <button id="soundToggle" class="pill" type="button" aria-pressed="false" title="Notification sound">sound</button>
     <button id="notifyToggle" class="pill" type="button" title="Native notifications">notify</button>
-    <span id="netstat" class="pill pill--quiet" title="Bytes fetched and no server contact">0 KB &middot; local</span>
+    <button id="securityToggle" class="pill" type="button" title="Security status" aria-pressed="false">🔒</button>
+    <span id="netstat" class="pill pill--quiet" title="Bytes fetched and no server contact">0 KB · local</span>
   </div>
 </header>
 
 <!-- ============================ view: bottom 75% ============================ -->
 <main id="view">
+
+  <section class="page page--compose is-active" data-page="compose">
+    <div class="page-head"><h1>Compose</h1></div>
+    <div class="compose-container" style="display: flex; flex-direction: column; height: calc(100% - 3rem); background: var(--bg-elev); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden;">
+      <div class="addr">
+        <div class="addr-row"><label for="cTo">To</label>
+          <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="recipient@domain.tld" data-pii="true">
+        </div>
+        <div class="addr-row"><label for="cCc">Cc</label>
+          <input id="cCc" type="text" autocomplete="off" spellcheck="false" placeholder="optional cc" data-pii="true">
+        </div>
+        <div class="addr-row"><label for="cBcc">Bcc</label>
+          <input id="cBcc" type="text" autocomplete="off" spellcheck="false" placeholder="optional bcc" data-pii="true">
+        </div>
+        <div class="addr-row"><label for="cSubject">Subject</label>
+          <input id="cSubject" type="text" autocomplete="off" spellcheck="false" placeholder="Subject">
+        </div>
+      </div>
+
+      <div class="format" role="toolbar" aria-label="Formatting">
+        <button data-fmt="bold" type="button" title="Bold"><b>B</b></button>
+        <button data-fmt="italic" type="button" title="Italic"><i>I</i></button>
+        <button data-fmt="underline" type="button" title="Underline"><u>U</u></button>
+        <button data-fmt="strike" type="button" title="Strikethrough">S</button>
+        <span class="sep"></span>
+        <select id="cSize" title="Font size, in real points" aria-label="Font size"></select>
+        <select id="cFont" title="Font" aria-label="Font">
+          <option value="inherit">inherit</option>
+          <option value="serif">serif</option>
+          <option value="monospace">mono</option>
+        </select>
+        <input id="cColor" type="color" value="#101012" title="Text colour" aria-label="Text colour">
+        <input id="cBg" type="color" value="#ffffff" title="Highlight" aria-label="Highlight colour">
+        <span class="sep"></span>
+        <button id="emojiBtn" type="button" title="Emoji" aria-haspopup="true" aria-expanded="false">☺</button>
+        <button id="cAttach" type="button" title="Attach">📎</button>
+        <input id="cFile" type="file" multiple hidden>
+      </div>
+
+      <div id="emoji" class="emoji" hidden role="dialog" aria-label="Emoji picker">
+        <div class="emoji-cats" role="tablist"></div>
+        <div class="emoji-skin" role="radiogroup" aria-label="Skin tone">
+          <button data-skin="default" type="button" aria-label="Default" class="on">◻</button>
+          <button data-skin="1F3FB" type="button" aria-label="Light">🏻</button>
+          <button data-skin="1F3FC" type="button" aria-label="Medium light">🏼</button>
+          <button data-skin="1F3FD" type="button" aria-label="Medium">🏽</button>
+          <button data-skin="1F3FE" type="button" aria-label="Medium dark">🏾</button>
+          <button data-skin="1F3FF" type="button" aria-label="Dark">🏿</button>
+        </div>
+        <div class="emoji-grid"></div>
+      </div>
+
+      <div id="editor" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" spellcheck="true" data-ph="Write your secure message here..."></div>
+
+      <div class="compose-foot">
+        <span id="draftState" class="minor">draft autosaves</span>
+        <span class="spacer"></span>
+        <button id="cDiscard" class="pill" type="button">Discard</button>
+        <button id="cSend" class="pill pill--go" type="button">Send Message</button>
+      </div>
+    </div>
+  </section>
 
   <section class="page" data-page="inbox" hidden>
     <div class="page-head"><h1>Inbox</h1></div>
@@ -88,13 +182,14 @@
     <p class="empty" data-empty="drafts">No drafts.</p>
   </section>
 
-  <!-- settings: three sliding sub-pages -->
+  <!-- settings: four sliding sub-pages -->
   <section class="page page--settings" data-page="settings" hidden>
     <div class="page-head">
       <h1>Settings</h1>
       <div class="subtabs" role="tablist" aria-label="Settings pages">
         <button class="subtab" data-sub="account" type="button" role="tab">Account</button>
         <button class="subtab" data-sub="compose" type="button" role="tab">Compose</button>
+        <button class="subtab" data-sub="security" type="button" role="tab">Security</button>
         <button class="subtab" data-sub="data" type="button" role="tab">Data</button>
       </div>
     </div>
@@ -108,6 +203,15 @@
       </label>
       <label class="field"><span>Domain</span>
         <input id="setDomain" type="text" autocomplete="off" spellcheck="false" placeholder="mx.dmail.link">
+      </label>
+      <label class="field"><span>Domain culture</span>
+        <select id="setDomainCulture">
+          <option value="mixed">Mixed / Random</option>
+          <option value="leet">Leet / Hacker (1337, kernel, shell, crypto)</option>
+          <option value="cyberpunk">Cyberpunk / Neon (neon, synth, chrome, netrun)</option>
+          <option value="privacy">Privacy / Counterculture (nolog, encrypted, tor, sovereign)</option>
+          <option value="minimal">Minimalist / Futuristic (sys, net, dev, ops, sec)</option>
+        </select>
       </label>
       <label class="field"><span>Signature</span>
         <textarea id="setSig" rows="4" placeholder="Sent from a tab that does not exist."></textarea>
@@ -134,6 +238,34 @@
       <label class="check"><input id="setAutoSig" type="checkbox"> Append signature to new mail</label>
       <label class="check"><input id="setNotify" type="checkbox"> Native notification on new mail</label>
       <label class="check"><input id="setSound" type="checkbox"> Sound on new mail</label>
+    </div>
+
+    <div class="subpage" data-sub="security" hidden>
+      <h2 class="minor">Encryption</h2>
+      <label class="field"><span>Passphrase (derives encryption key via Argon2id)</span>
+        <input id="setPassphrase" type="password" autocomplete="new-password" spellcheck="false" placeholder="Enter passphrase to encrypt mailbox">
+        <small class="minor">Leave empty for unencrypted storage. Once set, cannot be changed without wiping.</small>
+      </label>
+      <label class="field"><span>Confirm passphrase</span>
+        <input id="confirmPassphrase" type="password" autocomplete="new-password" spellcheck="false" placeholder="Confirm passphrase">
+      </label>
+      <div class="row">
+        <button id="setPassphraseBtn" class="pill pill--go" type="button">Set / Change Passphrase</button>
+        <button id="lockMailboxBtn" class="pill" type="button">Lock Mailbox</button>
+      </div>
+      <p id="encryptionStatus" class="minor">Storage: unencrypted</p>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Anti-Surveillance</h2>
+      <label class="check"><input id="setAntiKeylogger" type="checkbox" checked> Anti-keylogger (virtual keyboard, input masking, timing noise)</label>
+      <label class="check"><input id="setScreenProtection" type="checkbox" checked> Screen theft protection (PII obfuscation, print/screenshot redaction)</label>
+      <label class="check"><input id="setFingerprintProtection" type="checkbox" checked> Zero fingerprinting (canvas, WebGL, audio, fonts, battery, WebRTC)</label>
+      <label class="check"><input id="setDevToolsBlock" type="checkbox"> Block DevTools shortcuts (F12, Ctrl+Shift+I, etc.)</label>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Network</h2>
+      <label class="check"><input id="setOfflineMode" type="checkbox" checked> Offline-first (Service Worker, no network after load)</label>
+      <label class="check"><input id="setTorNotice" type="checkbox"> Show .onion / .i2p access notice</label>
+      <p class="minor">Access via Tor: <code>http://domail.onion</code> (configure onion service separately)</p>
+      <p class="minor">Access via I2P: <code>http://domail.i2p</code> (configure I2P tunnel separately)</p>
     </div>
 
     <div class="subpage" data-sub="data" hidden>
@@ -166,13 +298,13 @@
   <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Compose">
     <div class="addr">
       <div class="addr-row"><label for="cTo">To</label>
-        <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="someone@domain, other@domain">
+        <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="someone@domain, other@domain" data-pii="true">
       </div>
       <div class="addr-row" data-extra hidden><label for="cCc">Cc</label>
-        <input id="cCc" type="text" autocomplete="off" spellcheck="false">
+        <input id="cCc" type="text" autocomplete="off" spellcheck="false" data-pii="true">
       </div>
       <div class="addr-row" data-extra hidden><label for="cBcc">Bcc</label>
-        <input id="cBcc" type="text" autocomplete="off" spellcheck="false">
+        <input id="cBcc" type="text" autocomplete="off" spellcheck="false" data-pii="true">
       </div>
       <div class="addr-row"><label for="cSubject">Subject</label>
         <input id="cSubject" type="text" autocomplete="off" spellcheck="false">
@@ -183,7 +315,7 @@
       <button data-fmt="bold" type="button" title="Bold"><b>B</b></button>
       <button data-fmt="italic" type="button" title="Italic"><i>I</i></button>
       <button data-fmt="underline" type="button" title="Underline"><u>U</u></button>
-      <button data-fmt="strike" type="button" title="Strikethrough"><s>S</s></button>
+      <button data-fmt="strike" type="button" title="Strikethrough">S</button>
       <span class="sep"></span>
       <select id="cSize" title="Font size, in real points" aria-label="Font size"></select>
       <select id="cFont" title="Font" aria-label="Font">
@@ -233,6 +365,24 @@
     <button id="createBtn" class="create" type="button">Create mail account</button>
     <p class="minor">Or <button id="importBtn" class="linkbtn" type="button">restore from an export</button></p>
     <input id="onboardImport" type="file" accept="application/json" hidden>
+  </div>
+</div>
+
+<!-- ============================ passphrase prompt modal ============================ -->
+<div id="passphraseModal" class="modal modal--solo" hidden>
+  <div class="solo">
+    <img src="assets/img/logo.svg" alt="" width="56" height="56" aria-hidden="true">
+    <h1>Unlock Mailbox</h1>
+    <p>Enter your passphrase to decrypt the mailbox.</p>
+    <label class="field" style="max-width: 20rem;">
+      <span>Passphrase</span>
+      <input id="unlockPassphrase" type="password" autocomplete="off" spellcheck="false" placeholder="Passphrase">
+    </label>
+    <div class="row">
+      <button id="unlockBtn" class="pill pill--go" type="button">Unlock</button>
+      <button id="cancelUnlockBtn" class="pill" type="button">Cancel</button>
+    </div>
+    <p class="minor">Wrong passphrase? <button id="wipeFromLock" class="linkbtn" type="button">Wipe identity</button></p>
   </div>
 </div>
 

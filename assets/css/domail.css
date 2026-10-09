@@ -836,3 +836,217 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
   #chrome, .modal, .toast { display: none !important; }
   body { overflow: visible; }
 }
+
+/* --------------------- legal warning banner --------------------- */
+
+.legal-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: color-mix(in oklab, var(--bg-elev) 95%, var(--neon) 5%);
+  border-top: 1px solid var(--line-solid);
+  padding: 0.4rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  backdrop-filter: blur(8px);
+  animation: slideUp var(--slow) var(--ease);
+}
+
+.legal-banner[hidden] {
+  display: none !important;
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+.legal-icon {
+  flex-shrink: 0;
+  color: var(--neon);
+  font-size: 0.85rem;
+}
+
+.legal-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.legal-dismiss {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0.15rem 0.5rem;
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: all var(--fast) var(--ease);
+}
+
+.legal-dismiss:hover {
+  background: color-mix(in oklab, var(--neon) 15%, transparent);
+  border-color: var(--line-solid);
+  color: var(--neon);
+}
+
+/* --------------------- passphrase modal --------------------- */
+
+.modal--solo .solo label.field {
+  margin-top: 0.5rem;
+}
+
+.modal--solo .solo .field input[type="password"] {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-elev) 60%, transparent);
+  transition: border-color var(--fast) var(--ease);
+}
+
+.modal--solo .solo .field input[type="password"]:focus {
+  border-color: var(--line-solid);
+  outline: none;
+}
+
+.modal--solo .solo .minor {
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+/* --------------------- virtual keyboard --------------------- */
+
+.vk-container {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 10000;
+  background: var(--bg-elev);
+  border-top: 1px solid var(--line-solid);
+  padding: 0.5rem;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  box-shadow: 0 -4px 20px var(--shade);
+  animation: slideUp var(--fast) var(--ease);
+}
+
+.vk-container .row {
+  display: flex;
+  gap: 0.2rem;
+  justify-content: center;
+  margin: 0.2rem 0;
+}
+
+.vk-container button {
+  min-width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  transition: all var(--fast) var(--ease);
+}
+
+.vk-container button:hover {
+  background: color-mix(in oklab, var(--neon) 20%, transparent);
+  border-color: var(--line-solid);
+}
+
+.vk-container button:active {
+  background: var(--neon);
+  color: #0a0a0c;
+}
+
+.vk-container .vk-close {
+  display: block;
+  margin: 0.5rem auto 0;
+  padding: 0.5rem 1rem;
+}
+
+/* --------------------- security status indicator --------------------- */
+
+#securityToggle {
+  position: relative;
+}
+
+#securityToggle[aria-pressed="true"]::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  background: var(--neon);
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  box-shadow: 0 0 0 2px var(--neon);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(1.1); }
+}
+
+/* --------------------- security settings fields --------------------- */
+
+.field input[type="password"] {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-elev) 60%, transparent);
+  transition: border-color var(--fast) var(--ease);
+}
+
+.field input[type="password"]:focus {
+  border-color: var(--line-solid);
+  outline: none;
+}
+
+#encryptionStatus {
+  margin-top: 0.5rem;
+  padding: 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
+  background: color-mix(in oklab, var(--bg-elev) 60%, transparent);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  text-align: center;
+}
+
+#encryptionStatus.encrypted {
+  border-color: var(--neon);
+  color: var(--neon);
+  background: color-mix(in oklab, var(--neon) 10%, transparent);
+}
+
+#encryptionStatus.locked {
+  border-color: #e01f26;
+  color: #e01f26;
+  background: color-mix(in oklab, #e01f26 10%, transparent);
+}
+
+/* --------------------- responsive security --------------------- */
+
+@media (max-width: 720px) {
+  .legal-banner {
+    font-size: 0.65rem;
+    padding: 0.35rem 0.75rem;
+  }
+  .vk-container {
+    font-size: 0.75rem;
+  }
+  .vk-container button {
+    min-width: 2rem;
+    height: 2.2rem;
+  }
+}

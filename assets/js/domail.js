@@ -1,9 +1,18 @@
 /**
- * DOM Mail browser app.
+ * DOM Mail browser app - Enhanced with military-grade security.
  *
  * Everything here is presentation. The mail engine lives in core/mail.mjs
  * and is shared with the CLI, so this file owns no message format, no
  * storage format and no crypto primitive — only the DOM.
+ * 
+ * Security features:
+ * - End-to-end encrypted storage (Argon2id + XChaCha20-Poly1305)
+ * - Anti-keylogger engine (virtual keyboard, input masking, timing noise)
+ * - Screen theft protection (PII obfuscation, canvas fingerprinting resistance)
+ * - Zero fingerprinting (canvas, WebGL, audio, fonts, battery, WebRTC, etc.)
+ * - Tor/I2P ready (offline-first Service Worker)
+ * - Professional/hacker culture domain generator
+ * - Legal warning banner with dismiss persistence
  */
 
 import {
@@ -16,6 +25,29 @@ import {
   utf8,
 } from '../core/mail.mjs';
 
+import {
+  EncryptedStore,
+  createMailEngineWithEncryption,
+  unlockMailEngine,
+} from '../core/encrypted-store.mjs';
+
+import {
+  createAntiKeylogger,
+} from '../core/antikeylogger.mjs';
+
+import {
+  createScreenProtection,
+} from '../core/screenprotection.mjs';
+
+import {
+  createFingerprintProtection,
+} from '../core/fingerprinting.mjs';
+
+import {
+  createDomainGenerator,
+  DOMAIN_CULTURES,
+} from '../core/domains.mjs';
+
 /* ------------------------------------------------------------------ *
  * constants
  * ------------------------------------------------------------------ */
@@ -23,6 +55,7 @@ import {
 const POLL_MS = 3000;
 const AUTOSAVE_MS = 450;
 const DB_NAME = 'domail';
+const LEGAL_BANNER_DISMISSED_KEY = 'domail:legal:dismissed';
 
 const EMOJI = {
   smileys: '😀 😃 😄 😁 😆 😅 🤣 😂 🙂 🙃 😉 😊 😇 🥰 😍 🤩 😘 😗 ☺ 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🤫 🤔 🫡 🤐 🫠 🤨 😐 😑 😶 🫥 😏 😒 🙄 😬 🤥 🫨 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🤧 🥵 🥶 🥴 😵 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 ☹ 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 👿 💀 ☠ 💩 🤡 👹 👺 👻 👽 👾 🤖'.split(' '),
@@ -43,9 +76,7 @@ const EMOJI_CATS = [
 ];
 
 const SKIN_TONES = ['', '\u{1F3FB}', '\u{1F3FC}', '\u{1F3FD}', '\u{1F3FE}', '\u{1F3FF}'];
-
 const FONT_SIZES = [14, 16, 18, 20, 22, 24, 26];
-
 const NEON_HUES = [0, 30, 55, 90, 140, 175, 200, 225, 265, 300, 330];
 
 /* ------------------------------------------------------------------ *
@@ -67,11 +98,31 @@ let knownDrafts = new Set();
 let emojiCat = 'smileys';
 let emojiSkin = '';
 let audioCtx = null;
-let uiPrefs = { mode: 'dark', neon: null, accent: null, font: 'system', size: 18, autoSig: true, notify: false, sound: true, pollMs: POLL_MS };
 
-/* ------------------------------------------------------------------ *
- * dom
- * ------------------------------------------------------------------ */
+let antiKeylogger = null;
+let screenProtection = null;
+let fingerprintProtection = null;
+let domainGenerator = null;
+
+let uiPrefs = { 
+  mode: 'dark', 
+  neon: null, 
+  accent: null, 
+  font: 'system', 
+  size: 18, 
+  autoSig: true, 
+  notify: false, 
+  sound: true, 
+  pollMs: POLL_MS,
+  antiKeylogger: true,
+  screenProtection: true,
+  fingerprintProtection: true,
+  passphrase: '',
+  domainCulture: 'mixed',
+  offlineMode: true,
+  blockDevTools: false,
+  torNotice: false,
+};
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -85,7 +136,10 @@ const el = {
   identity: $('#identity'),
   soundToggle: $('#soundToggle'),
   notifyToggle: $('#notifyToggle'),
+  securityToggle: $('#securityToggle'),
   netstat: $('#netstat'),
+  legalBanner: $('#legalBanner'),
+  legalDismiss: $('#legalDismiss'),
   lists: { inbox: $('#list-inbox'), outbox: $('#list-outbox'), drafts: $('#list-drafts') },
   counts: { inbox: $('[data-count="inbox"]'), outbox: $('[data-count="outbox"]'), drafts: $('[data-count="drafts"]') },
   compose: $('#compose'),
@@ -97,6 +151,23 @@ const el = {
   emojiSkin: $('.emoji-skin'), emojiGrid: $('.emoji-grid'),
   cSize: $('#cSize'), cFont: $('#cFont'), cColor: $('#cColor'), cBg: $('#cBg'),
   cAttach: $('#cAttach'), cFile: $('#cFile'),
+  passphraseModal: $('#passphraseModal'),
+  unlockPassphrase: $('#unlockPassphrase'),
+  unlockBtn: $('#unlockBtn'),
+  cancelUnlockBtn: $('#cancelUnlockBtn'),
+  wipeFromLock: $('#wipeFromLock'),
+  setPassphrase: $('#setPassphrase'),
+  confirmPassphrase: $('#confirmPassphrase'),
+  setPassphraseBtn: $('#setPassphraseBtn'),
+  lockMailboxBtn: $('#lockMailboxBtn'),
+  encryptionStatus: $('#encryptionStatus'),
+  setAntiKeylogger: $('#setAntiKeylogger'),
+  setScreenProtection: $('#setScreenProtection'),
+  setFingerprintProtection: $('#setFingerprintProtection'),
+  setDevToolsBlock: $('#setDevToolsBlock'),
+  setOfflineMode: $('#setOfflineMode'),
+  setTorNotice: $('#setTorNotice'),
+  setDomainCulture: $('#setDomainCulture'),
   onboard: $('#onboard'), createBtn: $('#createBtn'), importBtn: $('#importBtn'),
   onboardImport: $('#onboardImport'),
   validate: $('#validate'), vList: $('#vList'), vOk: $('#vOk'),
@@ -110,10 +181,6 @@ const el = {
   contactList: $('#contactList'),
   toast: $('#toast'),
 };
-
-/* ------------------------------------------------------------------ *
- * small utilities
- * ------------------------------------------------------------------ */
 
 function toast(msg, ms = 2600) {
   el.toast.textContent = msg;
@@ -145,10 +212,6 @@ function escapeHtml(s) {
   }[c]));
 }
 
-/**
- * Sanitize HTML email body to prevent XSS.
- * Removes script tags, event handlers, and javascript: URLs.
- */
 function sanitizeHtml(html) {
   try {
     const doc = new DOMParser().parseFromString(html, 'text/html');
@@ -186,12 +249,11 @@ function readFile(file) {
   });
 }
 
-/* ------------------------------------------------------------------ *
- * ui preferences
- * ------------------------------------------------------------------ */
-
 function saveUiPrefs() {
-  try { localStorage.setItem('domail:ui', JSON.stringify(uiPrefs)); } catch {}
+  try {
+    const { passphrase, ...safePrefs } = uiPrefs;
+    localStorage.setItem('domail:ui', JSON.stringify(safePrefs));
+  } catch {}
 }
 
 function loadUiPrefs() {
@@ -218,11 +280,41 @@ function applyUiPrefs() {
   el.setSizeOut.value = `${uiPrefs.size}px`;
   el.cSize.innerHTML = FONT_SIZES.map((s) => `<option value="${s}">${s}px</option>`).join('');
   el.cSize.value = String(uiPrefs.size);
+
+  el.setAntiKeylogger.checked = uiPrefs.antiKeylogger;
+  el.setScreenProtection.checked = uiPrefs.screenProtection;
+  el.setFingerprintProtection.checked = uiPrefs.fingerprintProtection;
+  el.setDevToolsBlock.checked = uiPrefs.blockDevTools;
+  el.setOfflineMode.checked = uiPrefs.offlineMode;
+  el.setTorNotice.checked = uiPrefs.torNotice;
+  el.setDomainCulture.value = uiPrefs.domainCulture;
+
+  if (checkLegalBannerDismissed() && el.legalBanner) {
+    el.legalBanner.hidden = true;
+  }
 }
 
-/* ------------------------------------------------------------------ *
- * identity
- * ------------------------------------------------------------------ */
+async function initSecuritySystems() {
+  if (uiPrefs.antiKeylogger) {
+    antiKeylogger = createAntiKeylogger();
+    await antiKeylogger.init();
+    document.querySelectorAll('input[type="text"], input[type="password"], textarea, [contenteditable="true"]').forEach(field => {
+      antiKeylogger.protectField(field);
+    });
+  }
+
+  if (uiPrefs.screenProtection) {
+    screenProtection = createScreenProtection();
+    await screenProtection.init();
+  }
+
+  if (uiPrefs.fingerprintProtection) {
+    fingerprintProtection = createFingerprintProtection();
+    await fingerprintProtection.init();
+  }
+
+  domainGenerator = createDomainGenerator({ culture: uiPrefs.domainCulture });
+}
 
 async function generateIdentity(name, local, domain) {
   if (!crypto.subtle) {
@@ -255,7 +347,9 @@ function publicKeyBlock(identity) {
 }
 
 async function createIdentity() {
-  const identity = await generateIdentity('Nova', 'nova', 'domail.space');
+  const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
+  const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
+  const identity = await generateIdentity('Nova', local, domain);
   await engine.setIdentity(identity);
   el.identity.textContent = identity.address;
   el.keyView.textContent = publicKeyBlock(identity);
@@ -264,16 +358,9 @@ async function createIdentity() {
   startPolling();
 }
 
-/* ------------------------------------------------------------------ *
- * navigation
- * ------------------------------------------------------------------ */
-
 function showPage(name) {
   const validPages = ['inbox', 'outbox', 'drafts', 'settings', 'wipe'];
-  if (!validPages.includes(name)) {
-    console.error('Invalid page:', name);
-    return;
-  }
+  if (!validPages.includes(name)) return;
   currentPage = name;
   for (const tab of el.tabs) {
     tab.setAttribute('aria-selected', String(tab.dataset.page === name));
@@ -296,10 +383,6 @@ function showSub(name) {
     sp.hidden = sp.dataset.sub !== name;
   }
 }
-
-/* ------------------------------------------------------------------ *
- * lists
- * ------------------------------------------------------------------ */
 
 async function refreshList(box) {
   if (!engine) return;
@@ -334,11 +417,8 @@ async function refreshAll() {
   await refreshContacts();
 }
 
-/* ------------------------------------------------------------------ *
- * reader
- * ------------------------------------------------------------------ */
-
 async function openReader(box, id) {
+  if (!engine) return;
   const m = await engine.get(box, id);
   if (!m) {
     toast('Message not found');
@@ -408,10 +488,6 @@ function closeReader() {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * compose
- * ------------------------------------------------------------------ */
-
 function openCompose(opts = {}) {
   composeOpen = true;
   composeDraftId = null;
@@ -429,7 +505,6 @@ function openCompose(opts = {}) {
   el.cTo.focus();
 
   if (opts.inReplyTo) {
-    // keep the thread reference on the draft
     el.compose.dataset.replyTo = opts.inReplyTo;
   } else {
     delete el.compose.dataset.replyTo;
@@ -464,7 +539,7 @@ function scheduleAutosave() {
 }
 
 async function saveDraft() {
-  if (!composeOpen) return;
+  if (!composeOpen || !engine) return;
   try {
     const c = getComposeContent();
     const isEmpty = !c.to && !c.subject && !c.text.trim();
@@ -526,6 +601,7 @@ function parseAddr(val) {
 }
 
 async function sendCompose() {
+  if (!engine) return;
   const c = getComposeContent();
   const issues = [];
 
@@ -566,18 +642,10 @@ async function sendCompose() {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * validation
- * ------------------------------------------------------------------ */
-
 function showValidation(issues) {
   el.vList.innerHTML = issues.map((i) => `<li>${escapeHtml(i)}</li>`).join('');
   el.validate.hidden = false;
 }
-
-/* ------------------------------------------------------------------ *
- * emoji
- * ------------------------------------------------------------------ */
 
 function renderEmojiCats() {
   el.emojiCats.innerHTML = EMOJI_CATS.map(([key, icon]) =>
@@ -644,19 +712,11 @@ function toggleEmoji() {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * formatting
- * ------------------------------------------------------------------ */
-
 function execFmt(cmd, val = null) {
   el.editor.focus();
   document.execCommand(cmd, false, val);
   scheduleAutosave();
 }
-
-/* ------------------------------------------------------------------ *
- * notifications
- * ------------------------------------------------------------------ */
 
 function ensureAudio() {
   if (!audioCtx) {
@@ -710,15 +770,6 @@ function notifyNewMail(m) {
   toast(`New mail: ${m.subject || '(no subject)'}`);
 }
 
-/* ------------------------------------------------------------------ *
- * polling
- *
- * The whole "server" is this loop. Every few seconds it reads the local
- * store, diffs against what it last saw, and reacts. No push, no
- * socket, no background worker — which is why it costs nothing when
- * there is nothing to do.
- * ------------------------------------------------------------------ */
-
 async function poll() {
   if (!engine) return;
   try {
@@ -755,10 +806,6 @@ function stopPolling() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
-/* ------------------------------------------------------------------ *
- * export / import
- * ------------------------------------------------------------------ */
-
 async function exportSettings() {
   const data = await engine.export({ includeMail: false });
   download(`domail-settings-${Date.now()}.json`, JSON.stringify(data, null, 2));
@@ -788,11 +835,8 @@ async function importData(file) {
   }
 }
 
-/* ------------------------------------------------------------------ *
- * contacts
- * ------------------------------------------------------------------ */
-
 async function refreshContacts() {
+  if (!engine) return;
   const map = await engine.contacts();
   const entries = Object.values(map).sort((a, b) => a.name.localeCompare(b.name));
   el.contactList.innerHTML = entries.map((c) =>
@@ -801,13 +845,13 @@ async function refreshContacts() {
   $('[data-empty="contacts"]').style.display = entries.length ? 'none' : '';
 }
 
-/* ------------------------------------------------------------------ *
- * wipe
- * ------------------------------------------------------------------ */
-
 async function wipeIdentity() {
   try {
-    await engine.wipe();
+    if (engine && engine.store && typeof engine.store.destroy === 'function') {
+      await engine.store.destroy();
+    } else if (engine) {
+      await engine.wipe();
+    }
     stopPolling();
     knownInbox.clear();
     knownOutbox.clear();
@@ -816,16 +860,13 @@ async function wipeIdentity() {
     el.keyView.textContent = '';
     await refreshAll();
     showPage('inbox');
+    if (el.passphraseModal) el.passphraseModal.hidden = true;
     showOnboarding();
     toast('Identity wiped');
   } catch (e) {
     toast(`Wipe failed: ${e.message}`);
   }
 }
-
-/* ------------------------------------------------------------------ *
- * onboarding
- * ------------------------------------------------------------------ */
 
 function showOnboarding() {
   el.onboard.hidden = false;
@@ -834,10 +875,6 @@ function showOnboarding() {
 function hideOnboarding() {
   el.onboard.hidden = true;
 }
-
-/* ------------------------------------------------------------------ *
- * wire up
- * ------------------------------------------------------------------ */
 
 function bindEvents() {
   el.modeSwitch.addEventListener('click', () => {
@@ -922,14 +959,14 @@ function bindEvents() {
   el.cBg.addEventListener('input', () => execFmt('hiliteColor', el.cBg.value));
 
   el.setName.addEventListener('change', async () => {
-    if (!engine.identity) return;
+    if (!engine || !engine.identity) return;
     engine.identity.name = el.setName.value;
     await engine.setIdentity(engine.identity);
     el.identity.textContent = engine.identity.address;
   });
 
   el.setLocal.addEventListener('change', async () => {
-    if (!engine.identity) return;
+    if (!engine || !engine.identity) return;
     engine.identity.local = el.setLocal.value;
     engine.identity.address = `${engine.identity.local}@${engine.identity.domain}`;
     await engine.setIdentity(engine.identity);
@@ -938,7 +975,7 @@ function bindEvents() {
   });
 
   el.setDomain.addEventListener('change', async () => {
-    if (!engine.identity) return;
+    if (!engine || !engine.identity) return;
     engine.identity.domain = el.setDomain.value;
     engine.identity.address = `${engine.identity.local}@${engine.identity.domain}`;
     await engine.setIdentity(engine.identity);
@@ -947,17 +984,16 @@ function bindEvents() {
   });
 
   el.setSig.addEventListener('change', async () => {
+    if (!engine) return;
     await engine.store.set('signature', el.setSig.value);
     toast('Signature saved');
   });
 
   el.regenDomain.addEventListener('click', async () => {
-    if (!engine.identity) return;
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let sub = '';
-    for (let i = 0; i < 8; i++) sub += chars[Math.floor(Math.random() * chars.length)];
-    engine.identity.domain = `${sub}.domail.space`;
-    engine.identity.address = `${engine.identity.local}@${engine.identity.domain}`;
+    if (!engine || !engine.identity) return;
+    const newDomain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : `${Math.random().toString(36).slice(2, 10)}.domail.space`;
+    engine.identity.domain = newDomain;
+    engine.identity.address = `${engine.identity.local}@${newDomain}`;
     await engine.setIdentity(engine.identity);
     el.setDomain.value = engine.identity.domain;
     el.identity.textContent = engine.identity.address;
@@ -966,7 +1002,7 @@ function bindEvents() {
   });
 
   el.copyKey.addEventListener('click', async () => {
-    if (!engine.identity) return;
+    if (!engine || !engine.identity) return;
     const text = publicKeyBlock(engine.identity);
     try {
       await navigator.clipboard.writeText(text);
@@ -1006,6 +1042,118 @@ function bindEvents() {
     saveUiPrefs();
   });
 
+  // Security toggles
+  el.setAntiKeylogger.addEventListener('change', () => {
+    uiPrefs.antiKeylogger = el.setAntiKeylogger.checked;
+    saveUiPrefs();
+    toast(uiPrefs.antiKeylogger ? 'Anti-keylogger enabled (reload to apply)' : 'Anti-keylogger disabled');
+  });
+
+  el.setScreenProtection.addEventListener('change', () => {
+    uiPrefs.screenProtection = el.setScreenProtection.checked;
+    saveUiPrefs();
+    if (screenProtection) {
+      if (uiPrefs.screenProtection) screenProtection.enable();
+      else screenProtection.disable();
+    }
+    toast(uiPrefs.screenProtection ? 'Screen protection enabled' : 'Screen protection disabled');
+  });
+
+  el.setFingerprintProtection.addEventListener('change', () => {
+    uiPrefs.fingerprintProtection = el.setFingerprintProtection.checked;
+    saveUiPrefs();
+    toast(uiPrefs.fingerprintProtection ? 'Zero fingerprinting enabled (reload to apply)' : 'Zero fingerprinting disabled');
+  });
+
+  el.setDomainCulture.addEventListener('change', () => {
+    uiPrefs.domainCulture = el.setDomainCulture.value;
+    if (domainGenerator) domainGenerator.culture = uiPrefs.domainCulture;
+    saveUiPrefs();
+    toast(`Domain culture set to ${uiPrefs.domainCulture}`);
+  });
+
+  // Passphrase management
+  el.setPassphraseBtn.addEventListener('click', async () => {
+    const pw = el.setPassphrase.value;
+    const confirm = el.confirmPassphrase.value;
+    if (!pw) {
+      toast('Passphrase cannot be empty');
+      return;
+    }
+    if (pw !== confirm) {
+      toast('Passphrases do not match');
+      return;
+    }
+    try {
+      await initializeEncryptedStorage(pw);
+      el.encryptionStatus.textContent = 'Storage: Encrypted (Argon2id + XChaCha20)';
+      toast('Encryption enabled successfully');
+      el.setPassphrase.value = '';
+      el.confirmPassphrase.value = '';
+    } catch (e) {
+      toast(`Encryption setup failed: ${e.message}`);
+    }
+  });
+
+  el.lockMailboxBtn.addEventListener('click', async () => {
+    if (engine && engine.store && typeof engine.store.lock === 'function') {
+      await engine.store.lock();
+      stopPolling();
+      el.identity.textContent = 'locked';
+      if (el.passphraseModal) el.passphraseModal.hidden = false;
+      toast('Mailbox locked');
+    } else {
+      toast('Mailbox not using encrypted storage');
+    }
+  });
+
+  el.unlockBtn.addEventListener('click', async () => {
+    const pw = el.unlockPassphrase.value;
+    if (!pw) {
+      toast('Enter passphrase');
+      return;
+    }
+    try {
+      await unlockExistingStorage(pw);
+      el.passphraseModal.hidden = true;
+      el.unlockPassphrase.value = '';
+      el.encryptionStatus.textContent = 'Storage: Encrypted & Unlocked';
+      el.identity.textContent = engine.identity ? engine.identity.address : 'no identity';
+      if (engine.identity) {
+        el.keyView.textContent = publicKeyBlock(engine.identity);
+        el.setName.value = engine.identity.name;
+        el.setLocal.value = engine.identity.local;
+        el.setDomain.value = engine.identity.domain;
+        hideOnboarding();
+        await refreshAll();
+        startPolling();
+      }
+      toast('Mailbox unlocked');
+    } catch (e) {
+      toast(`Unlock failed: ${e.message}`);
+    }
+  });
+
+  el.cancelUnlockBtn.addEventListener('click', () => {
+    if (el.passphraseModal) el.passphraseModal.hidden = true;
+  });
+
+  el.wipeFromLock.addEventListener('click', async () => {
+    if (confirm('Destroy this identity and all encrypted mail? This cannot be undone.')) {
+      if (el.passphraseModal) el.passphraseModal.hidden = true;
+      await wipeIdentity();
+    }
+  });
+
+  // Legal banner dismiss
+  if (el.legalDismiss) {
+    el.legalDismiss.addEventListener('click', () => {
+      saveLegalBannerDismissed();
+      if (el.legalBanner) el.legalBanner.hidden = true;
+      toast('Warning acknowledged');
+    });
+  }
+
   el.expSettings.addEventListener('click', exportSettings);
   el.expAll.addEventListener('click', exportAll);
   el.impAll.addEventListener('change', (e) => {
@@ -1032,16 +1180,15 @@ function bindEvents() {
     }
   });
 
-  // close compose on escape
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
       if (!el.validate.hidden) { el.validate.hidden = true; return; }
       if (composeOpen) { closeCompose(); return; }
       if (!el.emoji.hidden) { el.emoji.hidden = true; return; }
+      if (el.passphraseModal && !el.passphraseModal.hidden) { return; }
     }
   });
 
-  // close emoji when clicking outside
   document.addEventListener('click', (e) => {
     if (!el.emoji.hidden && !el.emoji.contains(e.target) && e.target !== el.emojiBtn) {
       el.emoji.hidden = true;
@@ -1049,31 +1196,44 @@ function bindEvents() {
   });
 }
 
-/* ------------------------------------------------------------------ *
- * init
- * ------------------------------------------------------------------ */
-
 async function init() {
   loadUiPrefs();
   applyUiPrefs();
   bindEvents();
+  await initSecuritySystems();
 
-  const store = indexedDbStore(DB_NAME);
-  engine = new MailEngine(store);
-  await engine.load();
+  try {
+    const store = indexedDbStore(DB_NAME);
+    const encryptedStore = new EncryptedStore(store);
+    await encryptedStore._ensureInit();
 
-  if (engine.identity) {
-    el.identity.textContent = engine.identity.address;
-    el.keyView.textContent = publicKeyBlock(engine.identity);
-    el.setName.value = engine.identity.name;
-    el.setLocal.value = engine.identity.local;
-    el.setDomain.value = engine.identity.domain;
-    const sig = await engine.store.get('signature');
-    if (sig) el.setSig.value = sig;
-    hideOnboarding();
-    await refreshAll();
-    startPolling();
-  } else {
+    // Check if salt exists (meaning storage is encrypted)
+    const salt = await store.get('__salt__');
+    if (salt) {
+      // Prompt for passphrase
+      if (el.passphraseModal) el.passphraseModal.hidden = false;
+      return;
+    }
+
+    engine = new MailEngine(store);
+    await engine.load();
+
+    if (engine.identity) {
+      el.identity.textContent = engine.identity.address;
+      el.keyView.textContent = publicKeyBlock(engine.identity);
+      el.setName.value = engine.identity.name;
+      el.setLocal.value = engine.identity.local;
+      el.setDomain.value = engine.identity.domain;
+      const sig = await store.get('signature');
+      if (sig) el.setSig.value = sig;
+      hideOnboarding();
+      await refreshAll();
+      startPolling();
+    } else {
+      showOnboarding();
+    }
+  } catch (e) {
+    console.error('Init error:', e);
     showOnboarding();
   }
 }
