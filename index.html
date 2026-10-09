@@ -224,6 +224,7 @@ loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load err
     </div>
 
     <div class="subpage" data-sub="compose" hidden>
+      <h2 class="minor">Editor</h2>
       <label class="field"><span>Font</span>
         <select id="setFont">
           <option value="system">System (zero network)</option>
@@ -238,6 +239,33 @@ loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load err
       <label class="check"><input id="setAutoSig" type="checkbox"> Append signature to new mail</label>
       <label class="check"><input id="setNotify" type="checkbox"> Native notification on new mail</label>
       <label class="check"><input id="setSound" type="checkbox"> Sound on new mail</label>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Signature</h2>
+      <label class="field"><span>Signature text</span>
+        <textarea id="setSigCompose" rows="4" placeholder="Sent from a tab that does not exist."></textarea>
+      </label>
+      <label class="check"><input id="setSigRich" type="checkbox" checked> Allow rich text (HTML) in signature</label>
+      <label class="check"><input id="setSigAbove" type="checkbox"> Place signature above quoted text on reply</label>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Mail Server</h2>
+      <label class="field"><span>Polling interval</span>
+        <select id="setPollInterval">
+          <option value="0">Manual only</option>
+          <option value="3600000">Hourly</option>
+          <option value="300000">Every 5 minutes</option>
+          <option value="60000">Every minute</option>
+          <option value="10000">Every 10 seconds</option>
+          <option value="3000">Every 3 seconds (default)</option>
+        </select>
+        <small class="minor">Manual mode: click the refresh button to check for new mail.</small>
+      </label>
+      <label class="check"><input id="setReqSentConfirm" type="checkbox"> Request sent confirmation (adds 'Confirmation-Requested' header)</label>
+      <label class="check"><input id="setAutoReceive" type="checkbox" checked> Auto-move received mail to inbox</label>
+      <label class="check"><input id="setSaveSent" type="checkbox" checked> Save copy to Outbox on send</label>
+      <div class="row">
+        <button id="manualPollBtn" class="pill" type="button">Check mail now</button>
+        <button id="flushOutboxBtn" class="pill" type="button">Flush outbox (send queued)</button>
+      </div>
     </div>
 
     <div class="subpage" data-sub="security" hidden>

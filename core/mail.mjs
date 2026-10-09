@@ -278,6 +278,13 @@ export function buildMessage(o) {
   if (o.references) headers.push(foldHeader('References', o.references));
   headers.push('MIME-Version: 1.0');
 
+  // Custom headers
+  if (o.headers && typeof o.headers === 'object') {
+    for (const [key, value] of Object.entries(o.headers)) {
+      if (value) headers.push(foldHeader(key, value));
+    }
+  }
+
   const needsMultipart =
     (hasHtml && text) || attachments.length > 0;
 
@@ -825,15 +832,17 @@ export class MailEngine {
     return addr.endsWith(`@${domain}`) || addr === String(this.identity.address).toLowerCase();
   }
 
-  /**
-   * Compose and route in one step.
-   * `mailbox` is where the sender's own copy lands: 'outbox' normally.
+/**
+   * Send a message. `draft` should contain to, cc, bcc, subject, text, html, attachments, headers.
+   * `mailbox` is where the sender's own copy lands: 'outbox' normally, or null to skip saving.
    */
   async send(draft, mailbox = 'outbox') {
+    const { headers, ...draftWithoutHeaders } = draft;
     const raw = buildMessage({
-      ...draft,
+      ...draftWithoutHeaders,
       from: this.identity,
       date: new Date(this.now()),
+      headers,
     });
     const parsed = parseMessage(raw);
     const record = {
@@ -849,9 +858,12 @@ export class MailEngine {
       inReplyTo: parsed.inReplyTo || '',
       read: true,
       flagged: false,
+      status: 'sent',
       raw,
     };
-    await this.add(mailbox, record);
+    if (mailbox) {
+      await this.add(mailbox, record);
+    }
 
     // Deliver a copy to any local recipient, including the sender.
     const recipients = [

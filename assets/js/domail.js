@@ -122,6 +122,11 @@ let uiPrefs = {
   offlineMode: true,
   blockDevTools: false,
   torNotice: false,
+  reqSentConfirm: false,
+  autoReceive: true,
+  saveSent: true,
+  sigRich: true,
+  sigAbove: false,
 };
 
 const $ = (s) => document.querySelector(s);
@@ -180,6 +185,16 @@ const el = {
   expSettings: $('#expSettings'), expAll: $('#expAll'), impAll: $('#impAll'),
   contactList: $('#contactList'),
   toast: $('#toast'),
+  // New compose settings
+  setSigCompose: $('#setSigCompose'),
+  setSigRich: $('#setSigRich'),
+  setSigAbove: $('#setSigAbove'),
+  setPollInterval: $('#setPollInterval'),
+  setReqSentConfirm: $('#setReqSentConfirm'),
+  setAutoReceive: $('#setAutoReceive'),
+  setSaveSent: $('#setSaveSent'),
+  manualPollBtn: $('#manualPollBtn'),
+  flushOutboxBtn: $('#flushOutboxBtn'),
 };
 
 function toast(msg, ms = 2600) {
@@ -288,6 +303,15 @@ function applyUiPrefs() {
   el.setOfflineMode.checked = uiPrefs.offlineMode;
   el.setTorNotice.checked = uiPrefs.torNotice;
   el.setDomainCulture.value = uiPrefs.domainCulture;
+
+  // New compose settings
+  if (el.setSigCompose) el.setSigCompose.value = uiPrefs.signature || '';
+  el.setSigRich.checked = uiPrefs.sigRich;
+  el.setSigAbove.checked = uiPrefs.sigAbove;
+  el.setPollInterval.value = String(uiPrefs.pollMs);
+  el.setReqSentConfirm.checked = uiPrefs.reqSentConfirm;
+  el.setAutoReceive.checked = uiPrefs.autoReceive;
+  el.setSaveSent.checked = uiPrefs.saveSent;
 
   if (checkLegalBannerDismissed() && el.legalBanner) {
     el.legalBanner.hidden = true;
@@ -618,6 +642,11 @@ async function sendCompose() {
     const sig = uiPrefs.autoSig ? await engine.store.get('signature') : '';
     const body = sig ? `${c.text}\n\n${sig}` : c.text;
 
+    const headers = {};
+    if (uiPrefs.reqSentConfirm) {
+      headers['Disposition-Notification-To'] = engine.identity ? engine.identity.address : '';
+    }
+
     await engine.send({
       to,
       cc: parseAddr(c.cc),
@@ -626,7 +655,8 @@ async function sendCompose() {
       text: body,
       html: el.editor.innerHTML,
       attachments: composeAttachments,
-    }, 'outbox');
+      headers,
+    }, uiPrefs.saveSent ? 'outbox' : null);
 
     if (composeDraftId) {
       await engine.remove('drafts', composeDraftId);
@@ -634,7 +664,7 @@ async function sendCompose() {
     }
 
     closeCompose();
-    toast('Sent');
+    toast(uiPrefs.saveSent ? 'Sent (saved to Outbox)' : 'Sent (not saved)');
     await refreshAll();
     showPage('outbox');
   } catch (e) {
@@ -1040,6 +1070,74 @@ function bindEvents() {
     uiPrefs.sound = el.setSound.checked;
     el.soundToggle.setAttribute('aria-pressed', String(uiPrefs.sound));
     saveUiPrefs();
+  });
+
+  // New compose settings
+  el.setSigCompose.addEventListener('change', async () => {
+    if (!engine) return;
+    await engine.store.set('signature', el.setSigCompose.value);
+    uiPrefs.signature = el.setSigCompose.value;
+    saveUiPrefs();
+    toast('Signature saved');
+  });
+
+  el.setSigRich.addEventListener('change', () => {
+    uiPrefs.sigRich = el.setSigRich.checked;
+    saveUiPrefs();
+  });
+
+  el.setSigAbove.addEventListener('change', () => {
+    uiPrefs.sigAbove = el.setSigAbove.checked;
+    saveUiPrefs();
+  });
+
+  el.setPollInterval.addEventListener('change', () => {
+    uiPrefs.pollMs = Number(el.setPollInterval.value);
+    saveUiPrefs();
+    if (uiPrefs.pollMs > 0) {
+      startPolling();
+    } else {
+      stopPolling();
+    }
+    toast(uiPrefs.pollMs > 0 ? `Polling set to ${uiPrefs.pollMs / 1000}s` : 'Polling disabled (manual only)');
+  });
+
+  el.setReqSentConfirm.addEventListener('change', () => {
+    uiPrefs.reqSentConfirm = el.setReqSentConfirm.checked;
+    saveUiPrefs();
+  });
+
+  el.setAutoReceive.addEventListener('change', () => {
+    uiPrefs.autoReceive = el.setAutoReceive.checked;
+    saveUiPrefs();
+  });
+
+  el.setSaveSent.addEventListener('change', () => {
+    uiPrefs.saveSent = el.setSaveSent.checked;
+    saveUiPrefs();
+  });
+
+  el.manualPollBtn.addEventListener('click', () => {
+    poll();
+    toast('Checking for new mail...');
+  });
+
+  el.flushOutboxBtn.addEventListener('click', async () => {
+    if (!engine) return;
+    const outbox = await engine.list('outbox');
+    let sent = 0;
+    for (const m of outbox) {
+      if (m.status === 'queued' || m.status === 'sending') {
+        try {
+          await engine.send(m, 'outbox');
+          sent++;
+        } catch (e) {
+          console.error('Flush failed for message:', e);
+        }
+      }
+    }
+    await refreshAll();
+    toast(`Flushed ${sent} message(s) from outbox`);
   });
 
   // Security toggles
