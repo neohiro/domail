@@ -132,13 +132,12 @@ button { cursor: pointer; background: none; border: 0; }
 #chrome {
   position: relative;
   z-index: 2;
-  height: var(--chrome-h);
-  min-height: 120px;
-  padding: clamp(.6rem, 1.6vh, 1.2rem) clamp(.8rem, 2vw, 1.6rem);
+  min-height: 70px;
+  padding: .3rem .8rem;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  gap: .4rem;
+  gap: .15rem;
   /* The frame is 90% transparent: only a sliver of it is drawn. */
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line-solid);
