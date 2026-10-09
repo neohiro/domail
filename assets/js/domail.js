@@ -618,8 +618,12 @@ async function saveDraft() {
 function parseAddr(val) {
   if (!val) return [];
   return val.split(',').map((s) => s.trim()).filter(Boolean).map((address) => {
-    const clean = address.replace(/[<>"']/g, '');
-    if (!clean || clean.includes(' ')) return null;
+    const nameMatch = address.match(/^"([^"]+)"\s*<(.+)>$/) || address.match(/^([^<]+)\s*<(.+)>$/);
+    if (nameMatch) {
+      return { name: nameMatch[1].trim(), address: nameMatch[2].trim() };
+    }
+    const clean = address.replace(/[<>"']/g, '').trim();
+    if (!clean) return null;
     return { name: '', address: clean };
   }).filter(Boolean);
 }
@@ -643,8 +647,8 @@ async function sendCompose() {
     const body = sig ? `${c.text}\n\n${sig}` : c.text;
 
     const headers = {};
-    if (uiPrefs.reqSentConfirm) {
-      headers['Disposition-Notification-To'] = engine.identity ? engine.identity.address : '';
+    if (uiPrefs.reqSentConfirm && engine.identity) {
+      headers['Disposition-Notification-To'] = engine.identity.address;
     }
 
     await engine.send({
@@ -1092,7 +1096,13 @@ function bindEvents() {
   });
 
   el.setPollInterval.addEventListener('change', () => {
-    uiPrefs.pollMs = Number(el.setPollInterval.value);
+    const val = Number(el.setPollInterval.value);
+    if (!Number.isFinite(val) || val < 0) {
+      toast('Invalid polling interval');
+      el.setPollInterval.value = String(uiPrefs.pollMs);
+      return;
+    }
+    uiPrefs.pollMs = val;
     saveUiPrefs();
     if (uiPrefs.pollMs > 0) {
       startPolling();
@@ -1127,7 +1137,9 @@ function bindEvents() {
     const outbox = await engine.list('outbox');
     let sent = 0;
     for (const m of outbox) {
-      if (m.status === 'queued' || m.status === 'sending') {
+      // Only attempt to resend messages that don't have 'sent' status
+      // (e.g., failed/queued messages) or messages without status field
+      if (!m.status || m.status === 'queued' || m.status === 'sending') {
         try {
           await engine.send(m, 'outbox');
           sent++;
