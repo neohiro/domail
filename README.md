@@ -1,85 +1,60 @@
 # DOM Mail
 
-A local mail engine that runs entirely in your browser tab. No server, no account, no trace.
+A military-grade, zero-dependency, offline-first client-side mail engine that runs entirely in your browser tab or local CLI. No server, no account, no trace, no telemetry.
 
 ## What it is
 
-DOM Mail is a complete email client and local mail server that lives in a single HTML page. It implements RFC 5322 message formatting, MIME multipart encoding, address parsing, and a persistent mailbox — all in vanilla JavaScript with zero dependencies.
+DOM Mail is a complete email client and local mail engine that lives in a single HTML page. It implements RFC 5322 message formatting, MIME multipart encoding, address parsing, cryptographic identity generation (WebCrypto Ed25519 & X25519), and end-to-end encrypted storage (Argon2id + XChaCha20-Poly1305) — all in vanilla JavaScript with zero external npm dependencies or CDN requests.
 
-Your mail never leaves your browser. There is no backend, no database server, and no network connection beyond the initial page load.
+Your mail never leaves your browser. There is no backend server, no cloud database, and no network connection beyond the initial page load (or cached forever via Service Worker).
 
-## Features
+## Features & Security
 
-- **Local mail engine**: Send and receive mail within the same browser tab. Messages are stored in IndexedDB and persist across refreshes.
-- **Ephemeral identity**: Generate a new Ed25519/X25519 keypair on demand. Share your public key. Wipe everything with one click.
-- **Full compose experience**: Rich text editing with bold, italic, underline, strikethrough, font size, color, and highlight. Emoji picker with skin tone support. Attachments.
-- **Auto-drafts**: Composing autosaves to drafts every 450ms. Close and resume without losing work.
-- **Contacts**: Automatically learns names from incoming and outgoing mail.
-- **Export/Import**: Export settings only, or settings plus all mail. Restore from a backup file.
-- **Notifications**: Native Notification API support plus a WebAudio chime.
-- **Light/Dark mode**: Persistent theme with a random neon accent color on style overhaul.
-- **CLI**: A command-line interface (`cli/domail.mjs`) that shares the same mail engine and renders an ASCII inbox.
-- **Zero dependencies**: No npm packages. No build step. No framework.
+- **Autonomous Identity Provisioning**: Instantly generates a cryptographic mail identity upon landing. Supports multiple local identities with an instant Identity Switcher.
+- **Full Compose Workspace**: Clean, futuristic compose interface featuring `To`, `CC`, `BCC`, `Subject`, and rich text formatting (bold, italic, underline, strike, font size, font family, text/highlight colors), emoji picker, and file attachments.
+- **Screen Theft & Privacy Protection**: Real-time PII obfuscation (`***`), click-to-copy masked addresses with `'Copied!'` confirmation tooltips, and anti-screenshot/print redaction.
+- **Anti-Keylogger Engine**: Input masking and timing noise to defeat hardware and software keyloggers.
+- **Zero Fingerprinting**: Spoofs browser APIs, canvas, WebGL, audio, and device properties to prevent tracking.
+- **Encrypted Storage**: Optional Argon2id passphrase derivation combined with XChaCha20-Poly1305 authenticated encryption.
+- **Multi-Network Accessibility**: Fully accessible and optimized across:
+  - **HTTPS / Web**: `https://domail.space`
+  - **Tor Onion Service**: `http://domail.onion`
+  - **I2P Eepsite**: `http://domail.i2p`
+  - **Ethereum ENS / Decentralized Web**: `domail.eth` (IPFS gateway resolver)
+  - **IPFS / Radicle**: `ipfs://bafybeic...`
+  - **Nostr Relay**: `wss://relay.domail.space`
+- **Zero Dependencies**: Pure ES modules, zero npm packages, zero build step.
 
-## Quick start
+## Quick Start
 
-Open `index.html` in any modern browser. Click **Create mail account**. Start sending mail to yourself.
+1. Open `index.html` in any modern browser (or visit [domail.space](https://domail.space)).
+2. A secure mail identity is automatically provisioned.
+3. Compose and send messages instantly. All data persists locally in IndexedDB.
 
 ## Architecture
 
 ```
 domail/
 ├── core/
-│   └── mail.mjs          # RFC 5322 / MIME engine (shared browser + CLI)
+│   ├── mail.mjs              # RFC 5322 / MIME engine (shared browser + CLI)
+│   ├── crypto.mjs            # WebCrypto bindings (Ed25519, X25519, Argon2id)
+│   ├── encrypted-store.mjs   # E2E encrypted IndexedDB wrapper
+│   ├── antikeylogger.mjs     # Keylogger defenses & virtual keyboard
+│   ├── screenprotection.mjs   # PII masking & screen theft protection
+│   ├── fingerprinting.mjs    # Browser fingerprint spoofing
+│   └── domains.mjs           # Cyberpunk & hacker domain culture generator
 ├── assets/
-│   ├── css/domail.css    # All styles
-│   ├── js/domail.js      # Browser app (IndexedDB, UI, notifications)
-│   └── img/logo.svg      # Logo
+│   ├── css/domail.css        # Futuristic CSS custom property theming
+│   ├── js/domail.js          # Browser app controller & UI wiring
+│   └── img/logo.svg          # SVG vector logo
 ├── cli/
-│   └── domail.mjs        # Node.js CLI (ASCII inbox)
+│   └── domail.mjs            # Node.js CLI (ASCII inbox & mail engine)
 ├── test/
-│   └── core.test.mjs     # 42 tests, all passing
-├── index.html            # App entry point
-└── manifest.webmanifest  # PWA manifest
+│   └── core.test.mjs         # 52 comprehensive unit tests
+├── index.html                # App entry point
+├── sw.js                     # Service Worker for offline-first caching
+└── manifest.webmanifest      # PWA manifest
 ```
-
-### The mail engine (`core/mail.mjs`)
-
-The engine is a pure ES module with no DOM or Node dependencies. It provides:
-
-- `buildMessage(opts)` — Build a complete RFC 5322 message with MIME multipart support
-- `parseMessage(raw)` — Parse a raw message into a normalized envelope
-- `MailEngine` — A local mail store with `send()`, `deliver()`, `list()`, `remove()`, `wipe()`, `export()`, `import()`
-- `memoryStore()` / `indexedDbStore()` — Pluggable storage adapters
-
-The same engine powers both the browser app and the CLI, so neither can drift from the other.
-
-### Storage
-
-All data lives in IndexedDB under the `domail` database. The engine uses a simple key-value store with keys like `mbox:inbox`, `mbox:outbox`, `mbox:drafts`, `identity`, `contacts`, `signature`.
-
-The `wipe()` method deletes every key and clears the in-memory state. There is no recovery.
-
-### Crypto
-
-Identity keys are generated using the Web Crypto API:
-
-- **Ed25519** for signing (Chrome 137+, Firefox 129+, Safari 17+)
-- **X25519** for key exchange
-
-Public keys are exported as raw base64 and displayed in a `-----BEGIN DOM MAIL PUBLIC KEY-----` block that can be copied and shared.
-
-### Polling
-
-The "server" is a `setInterval` loop that runs every 3 seconds. It reads the local store, diffs against previously seen message IDs, and triggers notifications for new mail. When there is nothing to do, it costs nothing.
-
-## CLI
-
-```bash
-node cli/domail.mjs
-```
-
-The CLI renders an ASCII inbox, allows reading and composing messages, and shares the same `core/mail.mjs` engine as the browser app.
 
 ## Testing
 
@@ -87,35 +62,7 @@ The CLI renders an ASCII inbox, allows reading and composing messages, and share
 node --test test/core.test.mjs
 ```
 
-42 tests covering:
-- Base64 encoding/decoding (all byte lengths, RFC 4648 vectors)
-- RFC 2047 encoded-words
-- Header folding
-- Address parsing
-- Single-part and multipart message building
-- MIME tree walking and attachment extraction
-- Dot-stuffing and wire format
-- Engine operations (send, deliver, list, remove, wipe)
-- Export/import roundtrip
-- Storage adapter isolation
-
-## Deployment
-
-DOM Mail is hosted on GitHub Pages at [domail.space](https://domail.space).
-
-The site is plain static HTML/CSS/JS with no build step. The `.nojekyll` file ensures GitHub Pages serves it as-is.
-
-### DNS records
-
-| Type  | Name | Value                                    |
-|-------|------|------------------------------------------|
-| A     | @    | 185.199.108.153                          |
-| A     | @    | 185.199.109.153                          |
-| A     | @    | 185.199.110.153                          |
-| A     | @    | 185.199.111.153                          |
-| CNAME | www  | neohiro.github.io                        |
-
-The `CNAME` file in the repo root contains `domail.space`.
+52 rigorous tests covering base64 roundtrips, RFC 2047 encoded-words, header folding, address parsing, MIME multipart parsing, dot-stuffing, storage adapters, crypto sealing, and export/import roundtrips.
 
 ## License
 
