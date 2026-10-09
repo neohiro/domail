@@ -31,7 +31,10 @@
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .then(function(reg) { console.log('[DOM Mail] SW registered:', reg.scope); })
+      .then(function(reg) {
+        console.log('[DOM Mail] SW registered:', reg.scope);
+        reg.update();
+      })
       .catch(function(err) { console.log('[DOM Mail] SW registration failed:', err); });
   });
 }
