@@ -23,30 +23,30 @@ import {
   makeMessageId,
   bytesToBase64,
   utf8,
-} from '../core/mail.mjs';
+} from '../../core/mail.mjs';
 
 import {
   EncryptedStore,
   createMailEngineWithEncryption,
   unlockMailEngine,
-} from '../core/encrypted-store.mjs';
+} from '../../core/encrypted-store.mjs';
 
 import {
   createAntiKeylogger,
-} from '../core/antikeylogger.mjs';
+} from '../../core/antikeylogger.mjs';
 
 import {
   createScreenProtection,
-} from '../core/screenprotection.mjs';
+} from '../../core/screenprotection.mjs';
 
 import {
   createFingerprintProtection,
-} from '../core/fingerprinting.mjs';
+} from '../../core/fingerprinting.mjs';
 
 import {
   createDomainGenerator,
   DOMAIN_CULTURES,
-} from '../core/domains.mjs';
+} from '../../core/domains.mjs';
 
 /* ------------------------------------------------------------------ *
  * constants
@@ -1347,7 +1347,7 @@ async function initMainApp() {
   } catch (e) {
     console.warn('IndexedDB/EncryptedStore unavailable, falling back to memory store:', e);
     useMemoryStore = true;
-    const { memoryStore } = await import('../core/mail.mjs');
+    const { memoryStore } = await import('../../core/mail.mjs');
     store = memoryStore();
     toast('Running in memory-only mode (data not persisted)');
   }
@@ -1372,7 +1372,7 @@ async function initMainApp() {
   }
 
   // Initialize mail engine
-  const { MailEngine } = await import('../core/mail.mjs');
+  const { MailEngine } = await import('../../core/mail.mjs');
   engine = new MailEngine(store);
   
   try {
