@@ -33,6 +33,8 @@ jobs:
         run: |
           test -f index.html
           test -f assets/css/domail.css
+          test -f assets/js/boot.js
+          test -f assets/js/error-handler.js
           test -f assets/js/domail.js
           test -f core/mail.mjs
           test -f CNAME
@@ -46,6 +48,13 @@ jobs:
           test -f .nojekyll
           test -f .gitattributes
           test -f manifest.webmanifest
+
+      - name: Assert no inline scripts (CSP has no unsafe-inline for scripts)
+        run: |
+          if grep -qE '<script[^>]*>[[:space:]]*[^<]' index.html; then
+            echo "::error::inline <script> found; CSP script-src 'self' will block it"
+            exit 1
+          fi
 
       - name: Verify CNAME
         run: grep -q "domail.space" CNAME

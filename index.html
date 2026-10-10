@@ -7,6 +7,7 @@
 <meta name="description" content="A local mail engine that runs entirely in your browser tab. No server, no account, no trace.">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#101012">
 <link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -14,64 +15,11 @@
 <meta property="og:description" content="A local mail engine that runs entirely in your browser tab.">
 <meta property="og:type" content="website">
 <link rel="stylesheet" href="assets/css/domail.css">
-<script>
-/* Theme is applied before first paint so there is never a flash of the
-   wrong palette. This is the only script that runs synchronously. */
-(function () {
-  try {
-    var s = JSON.parse(localStorage.getItem('domail:ui') || '{}');
-    var r = document.documentElement;
-    r.dataset.mode = s.mode || 'dark';
-    if (s.neon) r.style.setProperty('--neon', s.neon);
-    if (s.accent) r.style.setProperty('--accent', s.accent);
-    if (s.font) r.dataset.font = s.font;
-  } catch (e) {}
-})();
-/* Register Service Worker for offline-first operation */
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', function() {
-    navigator.serviceWorker.register('/sw.js', { scope: '/' })
-      .then(function(reg) {
-        console.log('[DOM Mail] SW registered:', reg.scope);
-        reg.update();
-        if (reg.waiting) {
-          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
-        }
-        reg.addEventListener('updatefound', function() {
-          var newWorker = reg.installing;
-          newWorker.addEventListener('statechange', function() {
-            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-              console.log('[DOM Mail] New SW installed — update available');
-              // Do NOT auto-reload (breaks offline-first). Show toast instead.
-              var toast = document.getElementById('toast');
-              if (toast) {
-                toast.textContent = 'Update available — refresh when ready';
-                toast.hidden = false;
-                setTimeout(function() { toast.hidden = true; }, 8000);
-              }
-            }
-          });
-        });
-      })
-      .catch(function(err) { console.log('[DOM Mail] SW registration failed:', err); });
-  });
-}
-
-/* Load libsodium for WebCrypto (Argon2id, XChaCha20-Poly1305) */
-var libsodiumLoaded = false;
-function loadLibsodium() {
-  if (libsodiumLoaded) return Promise.resolve();
-  libsodiumLoaded = true;
-  return new Promise(function(resolve, reject) {
-    var script = document.createElement('script');
-    script.src = 'libsodium.js';
-    script.onload = function() { resolve(); };
-    script.onerror = function() { reject(new Error('Failed to load libsodium.js')); };
-    document.head.appendChild(script);
-  });
-}
-loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load error:', e); });
-</script>
+<!-- Synchronous on purpose: the saved theme is applied before first paint so
+     there is never a flash of the wrong palette. External file, not inline,
+     so the CSP needs no 'unsafe-inline' for scripts. -->
+<script src="assets/js/boot.js"></script>
+<script src="assets/js/error-handler.js"></script>
 </head>
 <body>
 
@@ -454,31 +402,6 @@ loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load err
 </div>
 
 <script type="module" src="assets/js/domail.js"></script>
-<script>
-  // Global error handler for module scripts
-  window.addEventListener('error', function(e) {
-    if (e.filename && e.filename.includes('domail')) {
-      showJSError(e.message + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
-    }
-  });
-  window.addEventListener('unhandledrejection', function(e) {
-    if (e.reason && e.reason.message) {
-      showJSError('Unhandled promise rejection: ' + e.reason.message);
-    }
-  });
-  function showJSError(msg) {
-    var el = document.getElementById('jsError');
-    var msgEl = document.getElementById('jsErrorMsg');
-    if (el && msgEl) {
-      msgEl.textContent = msg;
-      el.hidden = false;
-      console.error('[DOM Mail] Fatal error:', msg);
-    }
-  }
-  document.getElementById('jsErrorRetry')?.addEventListener('click', function() {
-    location.reload();
-  });
-</script>
 <noscript>
   <div style="position:fixed;inset:0;background:#101012;color:#e9e9ee;font-family:ui-monospace,monospace;padding:3rem;z-index:99999;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
     <div style="max-width:36rem;border:1px solid #00e5ff33;padding:2.5rem;border-radius:12px;background:#16161a;">

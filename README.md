@@ -16,6 +16,7 @@ Your mail never leaves your browser. There is no backend server, no cloud databa
 - **Anti-Keylogger Engine**: Input masking and timing noise to defeat hardware and software keyloggers.
 - **Zero Fingerprinting**: Spoofs browser APIs, canvas, WebGL, audio, and device properties to prevent tracking.
 - **Encrypted Storage**: Optional Argon2id passphrase derivation combined with XChaCha20-Poly1305 authenticated encryption.
+- **Enforced Content Security Policy**: A strict CSP ships as a `<meta>` tag (so it applies on GitHub Pages, which ignores `_headers`). `script-src 'self'` blocks inline script and `eval`; `connect-src 'self'` makes exfiltration to an external host impossible even under XSS; `object-src`, `frame-src`, `base-uri` and `form-action` are all locked to `none`. CI fails the build if an inline `<script>` is reintroduced. See [SECURITY.md](SECURITY.md).
 - **Multi-Network Accessibility**: Fully accessible and optimized across:
   - **HTTPS / Web**: `https://domail.space`
   - **Tor Onion Service**: `http://domail.onion`
@@ -45,6 +46,8 @@ domail/
 │   └── domains.mjs           # Cyberpunk & hacker domain culture generator
 ├── assets/
 │   ├── css/domail.css        # Futuristic CSS custom property theming
+│   ├── js/boot.js            # Pre-paint theme, SW registration, libsodium loader
+│   ├── js/error-handler.js   # Global error/unhandled-rejection surface
 │   ├── js/domail.js          # Browser app controller & UI wiring
 │   └── img/logo.svg          # SVG vector logo
 ├── cli/

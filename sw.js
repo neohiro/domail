@@ -9,12 +9,14 @@
  * - Secure headers via SW
  */
 
-const CACHE_NAME = 'domail-v2';
+const CACHE_NAME = 'domail-v3';
 const ASSETS = [
   '/',
   '/index.html',
   '/manifest.webmanifest',
   '/assets/css/domail.css',
+  '/assets/js/boot.js',
+  '/assets/js/error-handler.js',
   '/assets/js/domail.js',
   '/assets/img/logo.svg',
   '/core/mail.mjs',
