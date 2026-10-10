@@ -479,6 +479,19 @@ loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load err
     location.reload();
   });
 </script>
-<noscript><p style="padding:2rem">DOM Mail needs JavaScript: the mail engine runs in the page.</p></noscript>
+<noscript>
+  <div style="position:fixed;inset:0;background:#101012;color:#e9e9ee;font-family:ui-monospace,monospace;padding:3rem;z-index:99999;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;">
+    <div style="max-width:36rem;border:1px solid #00e5ff33;padding:2.5rem;border-radius:12px;background:#16161a;">
+      <h1 style="color:#00e5ff;margin-bottom:1rem;font-size:1.5rem;">[ DOM Mail — JavaScript Required ]</h1>
+      <p style="color:#9a9aa8;line-height:1.6;margin-bottom:1.5rem;">
+        DOM Mail is a zero-server, client-side cryptographic mail engine. It requires JavaScript to execute WebCrypto (Ed25519 &amp; X25519) key generation, MIME message parsing, and IndexedDB local storage.
+      </p>
+      <div style="background:#101012;padding:1rem;border-radius:8px;text-align:left;font-size:0.85rem;color:#00e5ff;margin-bottom:1.5rem;overflow-x:auto;">
+        <code># To run offline without a browser UI, use the Node.js CLI:<br>node cli/domail.mjs</code>
+      </div>
+      <p style="color:#6b6b78;font-size:0.8rem;">Please enable JavaScript in your browser settings to launch the web client.</p>
+    </div>
+  </div>
+</noscript>
 </body>
 </html>
