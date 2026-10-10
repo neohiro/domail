@@ -78,7 +78,7 @@ self.addEventListener('fetch', (event) => {
 });
 
 self.addEventListener('message', (event) => {
-  if (event.data === 'skipWaiting') {
+  if (event.data === 'skipWaiting' || (event.data && event.data.type === 'SKIP_WAITING')) {
     self.skipWaiting();
   }
   if (event.data === 'clearCache') {
@@ -93,6 +93,15 @@ self.addEventListener('message', (event) => {
       });
     });
   }
+});
+
+// Skip waiting immediately on install for faster updates
+self.addEventListener('install', (event) => {
+  event.waitUntil(
+    caches.open(CACHE_NAME).then((cache) => {
+      return cache.addAll(ASSETS.map(url => new Request(url, { cache: 'reload' })));
+    }).then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('periodicsync', (event) => {

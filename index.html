@@ -34,6 +34,18 @@ if ('serviceWorker' in navigator) {
       .then(function(reg) {
         console.log('[DOM Mail] SW registered:', reg.scope);
         reg.update();
+        if (reg.waiting) {
+          reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        }
+        reg.addEventListener('updatefound', function() {
+          var newWorker = reg.installing;
+          newWorker.addEventListener('statechange', function() {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              console.log('[DOM Mail] New SW installed, reloading...');
+              window.location.reload();
+            }
+          });
+        });
       })
       .catch(function(err) { console.log('[DOM Mail] SW registration failed:', err); });
   });
@@ -428,7 +440,39 @@ loadLibsodium().catch(function(e) { console.error('[DOM Mail] libsodium load err
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+<!-- Error display for JavaScript failures -->
+<div id="jsError" class="js-error" hidden role="alert">
+  <h3>JavaScript Error</h3>
+  <pre id="jsErrorMsg"></pre>
+  <button id="jsErrorRetry" class="pill pill--go" type="button">Retry</button>
+</div>
+
 <script type="module" src="assets/js/domail.js"></script>
+<script>
+  // Global error handler for module scripts
+  window.addEventListener('error', function(e) {
+    if (e.filename && e.filename.includes('domail')) {
+      showJSError(e.message + (e.lineno ? ' (line ' + e.lineno + ')' : ''));
+    }
+  });
+  window.addEventListener('unhandledrejection', function(e) {
+    if (e.reason && e.reason.message) {
+      showJSError('Unhandled promise rejection: ' + e.reason.message);
+    }
+  });
+  function showJSError(msg) {
+    var el = document.getElementById('jsError');
+    var msgEl = document.getElementById('jsErrorMsg');
+    if (el && msgEl) {
+      msgEl.textContent = msg;
+      el.hidden = false;
+      console.error('[DOM Mail] Fatal error:', msg);
+    }
+  }
+  document.getElementById('jsErrorRetry')?.addEventListener('click', function() {
+    location.reload();
+  });
+</script>
 <noscript><p style="padding:2rem">DOM Mail needs JavaScript: the mail engine runs in the page.</p></noscript>
 </body>
 </html>
