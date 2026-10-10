@@ -1228,3 +1228,37 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
   border-color: color-mix(in oklab, #e01f26 55%, transparent);
   background: color-mix(in oklab, #e01f26 12%, transparent);
 }
+.round--labelled {
+  width: auto;
+  height: auto;
+  min-height: 2.35rem;
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  padding: 0 .7rem 0 .55rem;
+  border-radius: 999px;
+}
+.round--labelled .round-knob {
+  width: 1.05rem;
+  height: 1.05rem;
+  /* The knob parks left in dark, right in light, as before, but inside a
+     pill the travel is smaller so it does not overlap the label. */
+  flex: 0 0 auto;
+}
+html[data-mode="dark"] .round--labelled .round-knob { transform: translateX(0); }
+html[data-mode="light"] .round--labelled .round-knob { transform: translateX(.5rem); }
+.round--labelled .round-text {
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.round--labelled:hover .round-text { color: var(--fg); }
+/* Identity chip: blind copy. The address is masked on screen; clicking copies
+   the real value, so a screenshot or shoulder-surfer never captures a usable
+   address. */
+.identity.is-copyable { cursor: pointer; transition: color var(--fast) var(--ease); }
+.identity.is-copyable:hover { color: var(--fg); text-decoration: underline dotted; }
+.identity.is-copyable.is-copied { color: var(--neon); font-weight: 700; text-decoration: none; }

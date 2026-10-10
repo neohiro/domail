@@ -7,7 +7,16 @@
 <meta name="description" content="A local mail engine that runs entirely in your browser tab. No server, no account, no trace.">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'">
+<!--
+  'wasm-unsafe-eval' is required and is NOT the same as 'unsafe-eval': it
+  permits WebAssembly.instantiate() (libsodium is Emscripten/WASM-compiled)
+  while still blocking eval(), new Function() and string timers. Using
+  'unsafe-eval' here would work but would give up the injection defence that
+  script-src 'self' exists to provide.
+  'frame-ancestors' is ignored in a meta tag; clickjacking is covered by the
+  X-Frame-Options / COOP headers that GitHub Pages sets.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="theme-color" content="#101012">
 <link rel="icon" href="assets/img/logo.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -36,11 +45,15 @@
 <header id="chrome">
   <div class="chrome-row">
     <div class="chrome-left">
-      <button id="modeSwitch" class="round" type="button" aria-label="Toggle light or dark mode" aria-pressed="false" title="Light / dark">
+      <button id="modeSwitch" class="round round--labelled" type="button"
+              aria-pressed="false" aria-label="Switch between dark and light theme">
         <span class="round-knob"></span>
+        <span class="round-text">Theme</span>
       </button>
-      <button id="overhaul" class="round" type="button" aria-label="Random full style overhaul" title="Style overhaul">
-        <span class="round-knob glyph">&#9670;</span>
+      <button id="overhaul" class="round round--labelled" type="button"
+              aria-label="Randomise the accent colour and style">
+        <span class="round-knob glyph" aria-hidden="true">&#9670;</span>
+        <span class="round-text">Style</span>
       </button>
       <span class="brand">
         <img src="assets/img/logo.svg" alt="" width="18" height="18" aria-hidden="true">
@@ -59,7 +72,8 @@
   </div>
 
   <div class="chrome-row chrome-row--id">
-    <span id="identity" class="identity" title="This session's address">no identity</span>
+    <span id="identity" class="identity" role="button" tabindex="0"
+            title="Click to copy the full address">no identity</span>
     <span class="spacer"></span>
     <button id="soundToggle" class="pill" type="button" aria-pressed="false" title="Notification sound">sound</button>
     <button id="notifyToggle" class="pill" type="button" title="Native notifications">notify</button>

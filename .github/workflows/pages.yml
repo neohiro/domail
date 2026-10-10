@@ -58,6 +58,19 @@ jobs:
             exit 1
           fi
 
+      - name: Assert WASM is permitted (libsodium is Emscripten-compiled)
+        run: |
+          # Without 'wasm-unsafe-eval' the browser refuses WebAssembly.instantiate,
+          # libsodium silently fails to load and all crypto is unavailable.
+          grep -q "wasm-unsafe-eval" index.html || {
+            echo "::error::index.html CSP is missing 'wasm-unsafe-eval'; libsodium cannot start"
+            exit 1
+          }
+
+      - name: Smoke-test the app boots and wires its controls (headless Chrome)
+        run: |
+          node tools/smoke.mjs
+
       - name: Verify CNAME
         run: grep -q "domail.space" CNAME
 

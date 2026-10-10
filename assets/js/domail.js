@@ -252,6 +252,90 @@ const el = {
   relayDisconnectBtn: $('#relayDisconnectBtn'),
 };
 
+/*
+ * Legal-banner dismissal.
+ *
+ * Both helpers used to be referenced from applyUiPrefs() and the dismiss
+ * handler but were never defined, which threw during init and left every
+ * control on the page unwired. They must not be able to throw: storage can be
+ * unavailable (private mode, blocked cookies), and a banner is cosmetic.
+ */
+function checkLegalBannerDismissed() {
+  try {
+    return localStorage.getItem(LEGAL_BANNER_DISMISSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveLegalBannerDismissed() {
+  try {
+    localStorage.setItem(LEGAL_BANNER_DISMISSED_KEY, '1');
+  } catch {}
+}
+
+/**
+ * Blind-copy display for a mail address.
+ *
+ * The address is never rendered in full on screen. Clicking the element copies
+ * the real address to the clipboard and briefly confirms it, so an onlooker
+ * (or a screenshot) never captures a usable address while the user can still
+ * paste it into a recipient field. Set showFullIdentity to opt out.
+ */
+function maskAddress(addr) {
+  const raw = String(addr ?? '');
+  if (!raw) return '';
+  if (uiPrefs.showFullIdentity) return raw;
+  if (raw === 'no identity' || raw === 'locked' || raw.startsWith('emergency_')) return raw;
+
+  const at = raw.lastIndexOf('@');
+  if (at <= 0) return raw;
+  const local = raw.slice(0, at);
+  const domain = raw.slice(at + 1);
+  const dot = domain.indexOf('.');
+
+  const head = local.length <= 1 ? '*' : local[0];
+  const maskedLocal = `${head}${'*'.repeat(Math.min(local.length - 1, 6))}`;
+
+  if (dot <= 0) return `${maskedLocal}@${domain[0] || '*'}${'*'.repeat(6)}`;
+  const name = domain.slice(0, dot);
+  const tld = domain.slice(dot + 1);
+  const maskedName = `${name.length <= 1 ? '*' : name[0]}${'*'.repeat(Math.min(name.length - 1, 6))}`;
+  return `${maskedLocal}@${maskedName}.${tld}`;
+}
+
+/** Paint the identity chip with a masked address (see maskAddress). */
+function renderIdentity() {
+  if (!el.identity) return;
+  if (!engine?.identity) {
+    el.identity.textContent = 'no identity';
+    el.identity.classList.remove('is-copyable', 'is-copied');
+    el.identity.title = 'No identity yet';
+    return;
+  }
+  el.identity.textContent = maskAddress(engine.identity.address);
+  el.identity.title = 'Click to copy the full address';
+  el.identity.classList.add('is-copyable');
+}
+
+let identityCopyTimer = null;
+async function copyFullAddress() {
+  const addr = engine?.identity?.address;
+  if (!addr) return;
+  try {
+    await navigator.clipboard.writeText(addr);
+    el.identity.textContent = 'Copied!';
+    el.identity.classList.add('is-copied');
+    clearTimeout(identityCopyTimer);
+    identityCopyTimer = setTimeout(() => {
+      el.identity.classList.remove('is-copied');
+      renderIdentity();
+    }, 1400);
+  } catch {
+    toast('Could not copy — your browser blocked clipboard access');
+  }
+}
+
 function toast(msg, ms = 2600) {
   el.toast.textContent = msg;
   el.toast.hidden = false;
@@ -513,7 +597,7 @@ async function createIdentity() {
   const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
   const identity = await generateIdentity('Nova', local, domain);
   await engine.setIdentity(identity);
-  el.identity.textContent = identity.address;
+  renderIdentity();
   el.keyView.textContent = publicKeyBlock(identity);
   toast(`Identity created: ${identity.address}`);
   await refreshAll();
@@ -1165,7 +1249,7 @@ async function importData(file) {
       throw new Error('Not a DOM Mail export file');
     }
     await engine.import(data);
-    el.identity.textContent = engine.identity ? engine.identity.address : 'no identity';
+    renderIdentity();
     if (engine.identity) el.keyView.textContent = publicKeyBlock(engine.identity);
     await refreshAll();
     toast('Imported');
@@ -1252,6 +1336,15 @@ function bindEvents() {
 
   el.notifyToggle.addEventListener('click', requestNotifyPermission);
 
+  // Blind copy: the address on screen is masked; clicking copies the real one.
+  el.identity.addEventListener('click', copyFullAddress);
+  el.identity.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      copyFullAddress();
+    }
+  });
+
   el.cClose.addEventListener('click', closeCompose);
   el.cDiscard.addEventListener('click', async () => {
     if (composeDraftId) {
@@ -1305,7 +1398,7 @@ function bindEvents() {
     if (!engine || !engine.identity) return;
     engine.identity.name = el.setName.value;
     await engine.setIdentity(engine.identity);
-    el.identity.textContent = engine.identity.address;
+    renderIdentity();
   });
 
   el.setLocal.addEventListener('change', async () => {
@@ -1313,7 +1406,7 @@ function bindEvents() {
     engine.identity.local = el.setLocal.value;
     engine.identity.address = `${engine.identity.local}@${engine.identity.domain}`;
     await engine.setIdentity(engine.identity);
-    el.identity.textContent = engine.identity.address;
+    renderIdentity();
     el.keyView.textContent = publicKeyBlock(engine.identity);
   });
 
@@ -1322,7 +1415,7 @@ function bindEvents() {
     engine.identity.domain = el.setDomain.value;
     engine.identity.address = `${engine.identity.local}@${engine.identity.domain}`;
     await engine.setIdentity(engine.identity);
-    el.identity.textContent = engine.identity.address;
+    renderIdentity();
     el.keyView.textContent = publicKeyBlock(engine.identity);
   });
 
@@ -1339,7 +1432,7 @@ function bindEvents() {
     engine.identity.address = `${engine.identity.local}@${newDomain}`;
     await engine.setIdentity(engine.identity);
     el.setDomain.value = engine.identity.domain;
-    el.identity.textContent = engine.identity.address;
+    renderIdentity();
     el.keyView.textContent = publicKeyBlock(engine.identity);
     toast(`New domain: ${engine.identity.domain}`);
   });
@@ -1537,7 +1630,7 @@ function bindEvents() {
       el.passphraseModal.hidden = true;
       el.unlockPassphrase.value = '';
       el.encryptionStatus.textContent = 'Storage: Encrypted & Unlocked';
-      el.identity.textContent = engine.identity ? engine.identity.address : 'no identity';
+      renderIdentity();
       if (engine.identity) {
         el.keyView.textContent = publicKeyBlock(engine.identity);
         el.setName.value = engine.identity.name;
@@ -1733,8 +1826,7 @@ async function initMainApp() {
   }
 
   if (engine.identity) {
-    el.identity.textContent = maskAddress(engine.identity.address);
-    el.identity.title = 'Click to copy full secure address';
+    renderIdentity();
     el.keyView.textContent = publicKeyBlock(engine.identity);
     el.setName.value = engine.identity.name;
     el.setLocal.value = engine.identity.local;

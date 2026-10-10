@@ -6,6 +6,8 @@
   "private": true,
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "smoke": "node tools/smoke.mjs",
+    "verify": "npm test && npm run smoke",
     "cli": "node cli/domail.mjs"
   }
 }
