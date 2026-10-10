@@ -617,7 +617,7 @@ async function saveDraft() {
 
 function parseAddr(val) {
   if (!val) return [];
-  return val.split(',').map((s) => s.trim()).filter(Boolean).map((address) => {
+  return val.split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((address) => {
     const nameMatch = address.match(/^"([^"]+)"\s*<(.+)>$/) || address.match(/^([^<]+)\s*<(.+)>$/);
     if (nameMatch) {
       return { name: nameMatch[1].trim(), address: nameMatch[2].trim() };

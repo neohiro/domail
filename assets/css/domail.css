@@ -298,15 +298,20 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
   padding: clamp(.8rem, 2vh, 1.5rem) clamp(.8rem, 2vw, 1.6rem);
   overflow-y: auto;
   overscroll-behavior: contain;
-}
-/* Pages slide. Only opacity and transform, so it stays on the compositor. */
-.page[hidden] { display: block; visibility: hidden; pointer-events: none; }
-.page {
   opacity: 0;
   transform: translateX(14px);
-  transition: opacity var(--fast) var(--ease), transform var(--slow) var(--ease);
+  pointer-events: none;
+  transition: opacity var(--fast) var(--ease), transform var(--slow) var(--ease), pointer-events 0s var(--slow);
 }
-.page.is-active { opacity: 1; transform: none; }
+.page.is-active {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+  z-index: 1;
+}
+.page[hidden] {
+  display: none;
+}
 
 .page-head {
   display: flex;
