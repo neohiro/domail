@@ -9,7 +9,7 @@
  * - Secure headers via SW
  */
 
-const CACHE_NAME = 'domail-v3';
+const CACHE_NAME = 'domail-v4';
 const ASSETS = [
   '/',
   '/index.html',
@@ -26,6 +26,8 @@ const ASSETS = [
   '/core/screenprotection.mjs',
   '/core/fingerprinting.mjs',
   '/core/domains.mjs',
+  '/core/pgp.mjs',
+  '/core/relay.mjs',
 ];
 
 const OFFLINE_FALLBACK = '/index.html';

@@ -26,6 +26,47 @@ Your mail never leaves your browser. There is no backend server, no cloud databa
   - **Nostr Relay**: `wss://relay.domail.space`
 - **Zero Dependencies**: Pure ES modules, zero npm packages, zero build step.
 
+## Optional networked features (off by default)
+
+DOM Mail is local-only by design. Two optional features can trade that away, and
+both are **disabled until you explicitly turn them on** in **Settings → Network**.
+Each one shows a warning panel explaining exactly what it costs you before you
+commit, and the browser and CLI builds share the same defaults.
+
+### Armored encryption ("PGP")
+
+`core/pgp.mjs`. Wraps a message body in an OpenPGP-compatible **ASCII-Armor
+envelope** (RFC 4880 §6, with a real CRC-24 checksum) and seals it to each
+recipient's X25519 public key using libsodium sealed boxes. Optionally signs with
+Ed25519.
+
+- **It is not OpenPGP.** GnuPG's armor tools parse the envelope and validate the
+  checksum, but the payload is DOM Mail's own packet format and **will not
+  decrypt in GnuPG**. Use GnuPG if you need RFC 4880 interoperability.
+- **Metadata is still exposed.** From, To, Subject, Date and ciphertext size stay
+  in the envelope. Timing analysis is possible regardless.
+- **No silent downgrade.** If a recipient's public key is unknown, sending is
+  *refused* rather than quietly falling back to plaintext.
+- Keys come only from DOM Mail identities you have already met — there is no key
+  server and nothing is fetched to learn one.
+
+### WebSocket relay
+
+`core/relay.mjs`. Opt-in client for relaying mail between devices you control.
+
+- **Your IP address and online times become visible to the relay operator.** On Tor
+  this defeats the purpose entirely.
+- **Traffic analysis remains possible** even with an encrypted body.
+- If PGP is off, the relay reads the envelope in plaintext.
+- **A malicious relay can drop, replay, reorder or censor** mail. There is no
+  authentication of the relay and no delivery guarantee.
+- DOM Mail stops being purely local and stops working offline.
+- `wss://` is required for any non-local relay; plaintext `ws://` is accepted only
+  between loopback addresses.
+
+Both features are wired into the CLI too (`node cli/domail.mjs pgp on`,
+`node cli/domail.mjs relay on`), so the headless and site builds behave alike.
+
 ## Quick Start
 
 1. Open `index.html` in any modern browser (or visit [domail.space](https://domail.space)).
@@ -43,6 +84,8 @@ domail/
 │   ├── antikeylogger.mjs     # Keylogger defenses & virtual keyboard
 │   ├── screenprotection.mjs   # PII masking & screen theft protection
 │   ├── fingerprinting.mjs    # Browser fingerprint spoofing
+│   ├── pgp.mjs               # Optional: OpenPGP-style armor + X25519 sealing
+│   ├── relay.mjs             # Optional: opt-in WebSocket relay client
 │   └── domains.mjs           # Cyberpunk & hacker domain culture generator
 ├── assets/
 │   ├── css/domail.css        # Futuristic CSS custom property theming
@@ -53,7 +96,8 @@ domail/
 ├── cli/
 │   └── domail.mjs            # Node.js CLI (ASCII inbox & mail engine)
 ├── test/
-│   └── core.test.mjs         # 52 comprehensive unit tests
+│   └── core.test.mjs         # 52 engine/MIME tests
+│       optional.test.mjs     # 38 armor, crypto and relay tests
 ├── index.html                # App entry point
 ├── sw.js                     # Service Worker for offline-first caching
 └── manifest.webmanifest      # PWA manifest

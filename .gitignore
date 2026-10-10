@@ -3,3 +3,7 @@ _site/
 .jekyll-cache/
 __pycache__/
 *.log
+
+# Local CLI state (mail + headless settings); must never be committed.
+.domail-cli.json
+.domail-cli-config.json

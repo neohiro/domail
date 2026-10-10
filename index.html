@@ -159,6 +159,7 @@
         <button class="subtab" data-sub="account" type="button" role="tab">Account</button>
         <button class="subtab" data-sub="compose" type="button" role="tab">Compose</button>
         <button class="subtab" data-sub="security" type="button" role="tab">Security</button>
+        <button class="subtab" data-sub="network" type="button" role="tab">Network</button>
         <button class="subtab" data-sub="data" type="button" role="tab">Data</button>
       </div>
     </div>
@@ -263,6 +264,93 @@
       <label class="check"><input id="setTorNotice" type="checkbox"> Show .onion / .i2p access notice</label>
       <p class="minor">Access via Tor: <code>http://domail.onion</code> (configure onion service separately)</p>
       <p class="minor">Access via I2P: <code>http://domail.i2p</code> (configure I2P tunnel separately)</p>
+    </div>
+
+    <!-- ============================ optional, opt-in ============================ -->
+    <div class="subpage" data-sub="network" hidden>
+      <div class="opt-head">
+        <h2 class="opt-title">Optional networked features</h2>
+        <p class="opt-lede">
+          Both features below are <strong>off by default</strong>. DOM Mail is designed to be
+          purely local, and turning either of these on deliberately gives up part of that
+          privacy. Read the warning on each before enabling it.
+        </p>
+      </div>
+
+      <!-- ---------- PGP ---------- -->
+      <section class="opt" id="optPgp" aria-labelledby="optPgpTitle">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optPgpTitle">Armored encryption (PGP)</h3>
+          <label class="switch">
+            <input id="setPgp" type="checkbox" aria-describedby="pgpWarn">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label" id="pgpState">Off</span>
+          </label>
+        </header>
+        <label class="check"><input id="setPgpSign" type="checkbox"> Sign outgoing mail with my Ed25519 key</label>
+        <div class="warn" id="pgpWarn" role="note">
+          <span class="warn-tag">Not OpenPGP</span>
+          <p>
+            This is an OpenPGP-compatible <em>armor</em> envelope (RFC 4880 §6, with CRC-24 checksums)
+            carrying DOM Mail's own packet format. GnuPG's armor tools will parse it and validate the
+            checksum, but it <strong>will not decrypt in GnuPG</strong> and is not a conformant
+            RFC 4880 message. Use GnuPG when you need real OpenPGP interoperability.
+          </p>
+          <p>
+            <strong>Metadata is still exposed.</strong> Encrypting the body does not hide the
+            envelope. Whoever handles the message still sees <code>From</code>, <code>To</code>,
+            <code>Subject</code>, <code>Date</code> and the size of the ciphertext. Timing analysis
+            is possible regardless.
+          </p>
+          <p class="warn-detail">
+            Recipients must be DOM Mail peers whose X25519 public keys you have already obtained.
+            The keyring is stored locally and is never transmitted anywhere on its own.
+          </p>
+        </div>
+      </section>
+
+      <!-- ---------- Relay ---------- -->
+      <section class="opt" id="optRelay" aria-labelledby="optRelayTitle">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optRelayTitle">WebSocket relay</h3>
+          <label class="switch">
+            <input id="setRelay" type="checkbox" aria-describedby="relayWarn">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label" id="relayState">Off</span>
+          </label>
+        </header>
+        <label class="field">
+          <span>Relay URL</span>
+          <input id="setRelayUrl" type="url" inputmode="url" spellcheck="false"
+                 placeholder="wss://relay.example/ws" autocomplete="off"
+                 disabled aria-describedby="relayUrlHelp">
+          <small class="minor" id="relayUrlHelp">
+            <code>wss://</code> is required for any non-local relay. Plaintext <code>ws://</code>
+            is accepted only between loopback addresses, because it would otherwise expose the
+            whole session. The relay must speak the DOMP/1 JSON frame protocol described in
+            <code>core/relay.mjs</code>.
+          </small>
+        </label>
+        <div class="row">
+          <button id="relayConnectBtn" class="pill" type="button" disabled>Connect now</button>
+          <button id="relayDisconnectBtn" class="pill" type="button" disabled>Disconnect</button>
+          <span id="relayStatus" class="pill pill--quiet" role="status" aria-live="polite">disabled</span>
+        </div>
+        <div class="warn warn--danger" id="relayWarn" role="note">
+          <span class="warn-tag">Exposes you</span>
+          <p>Enabling a relay gives up DOM Mail's core privacy property. Before you do, understand exactly what changes:</p>
+          <ul>
+            <li><strong>Your IP address and online times become visible to the relay operator.</strong> On Tor this defeats the purpose entirely.</li>
+            <li><strong>Traffic analysis stays possible</strong> even with an encrypted body: an observer can still see who talks to whom, when, and how much data moves.</li>
+            <li><strong>If PGP is off, the envelope is readable in plaintext</strong> by the relay.</li>
+            <li><strong>A malicious relay can drop, replay, reorder or censor</strong> anything it carries. There is no authentication of the relay and no delivery guarantee.</li>
+            <li><strong>DOM Mail stops being purely local</strong> and stops working offline.</li>
+          </ul>
+          <p class="warn-detail">
+            Leave this off unless you specifically need to relay mail between two devices you control.
+          </p>
+        </div>
+      </section>
     </div>
 
     <div class="subpage" data-sub="data" hidden>

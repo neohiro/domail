@@ -27,7 +27,7 @@ jobs:
           node-version: '22'
 
       - name: Run tests
-        run: node --test test/core.test.mjs
+        run: node --test test/*.test.mjs
 
       - name: Check required files
         run: |
@@ -37,6 +37,8 @@ jobs:
           test -f assets/js/error-handler.js
           test -f assets/js/domail.js
           test -f core/mail.mjs
+          test -f core/pgp.mjs
+          test -f core/relay.mjs
           test -f CNAME
           test -f LICENSE
           test -f README.md

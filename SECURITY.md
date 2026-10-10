@@ -64,6 +64,35 @@ does not weaken the threat model.
 `<script>`, or if any of the boot files go missing. This keeps the CSP honest
 over time instead of silently rotting.
 
+## Optional networked features
+
+Two features break the local-only default. Both ship **disabled** and must be
+enabled deliberately in **Settings → Network** (or via the CLI). Enabling either
+one is a deliberate trade of the privacy properties above, and the UI states the
+cost before you confirm.
+
+| Feature | Module | Default | What giving it up costs |
+| ------- | ------ | ------- | ---------------------- |
+| Armored encryption ("PGP") | `core/pgp.mjs` | off | Envelope metadata (From, To, Subject, Date, size) stays visible; timing analysis remains possible. Not RFC 4880 interoperable. |
+| WebSocket relay | `core/relay.mjs` | off | Your IP and online times become visible to the relay operator; traffic analysis possible; a malicious relay can drop, replay, reorder or censor; the app stops working offline. |
+
+Additional notes:
+
+- **No silent downgrade.** With PGP on, a message to an address whose public key
+  is unknown is *refused*, not sent in the clear.
+- **No key server.** Public keys are learned only from DOM Mail identities already
+  in contact. Nothing is fetched to learn a key.
+- **`ws://` is refused** for any non-loopback host, so the relay cannot silently
+  downgrade to plaintext.
+- **The relay is not authenticated and offers no delivery guarantee.** Treat
+  anything arriving through it as untrusted input until verified at the message
+  layer.
+
+### Reporting
+
+Both features are in scope for security review. Please use GitHub Security
+Advisories rather than public issues (see above).
+
 ## Verifying the policy yourself
 
 ```bash

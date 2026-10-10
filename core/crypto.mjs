@@ -127,8 +127,20 @@ export async function sign(detached, message, privateKey) {
 export async function verify(detached, signature, message, publicKey) {
   assertSodium();
   try {
-    if (detached) _sodium.crypto_sign_verify_detached(signature, message, publicKey);
-    else _sodium.crypto_sign_open(signature, publicKey);
+    if (detached) {
+      /*
+       * libsodium's JS bindings are inconsistent about how a failed
+       * verification is reported. The stock `libsodium-wrappers` build throws,
+       * but the bundled build returns a boolean. Ignoring the return value
+       * here made every signature look valid, so honour both conventions:
+       * a missing/false/!==0 result means the signature is NOT valid.
+       */
+      const ok = _sodium.crypto_sign_verify_detached(signature, message, publicKey);
+      return ok === true || ok === 0;
+    }
+    // crypto_sign_open returns the signed message on success and throws on
+    // failure, so reaching this point means the signature checked out.
+    _sodium.crypto_sign_open(signature, publicKey);
     return true;
   } catch {
     return false;

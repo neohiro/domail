@@ -48,6 +48,16 @@ import {
   DOMAIN_CULTURES,
 } from '../../core/domains.mjs';
 
+import {
+  encryptMessage,
+  decryptMessage,
+  PGP,
+} from '../../core/pgp.mjs';
+
+import {
+  createRelayClient,
+} from '../../core/relay.mjs';
+
 /* ------------------------------------------------------------------ *
  * constants
  * ------------------------------------------------------------------ */
@@ -104,6 +114,33 @@ let screenProtection = null;
 let fingerprintProtection = null;
 let domainGenerator = null;
 
+/**
+ * Relay client. Constructed lazily and only when the user has opted in, so
+ * importing this module never touches the network.
+ */
+let relay = null;
+
+/**
+ * PGP keyring: address (lowercased) -> base64 X25519 public key.
+ * Populated from identities DOM Mail has already met, so there is no key
+ * server and nothing is fetched to learn a key.
+ */
+let pgpKeyring = {};
+
+/** base64 -> Uint8Array, tolerating the plain-ASCII default alphabet. */
+function fromBase64(b64) {
+  const bin = atob(String(b64));
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/** Learn (or refresh) a peer's X25519 public key from a DOM Mail identity. */
+function rememberPgpKey(identity) {
+  if (!identity?.address || !identity.x25519) return;
+  pgpKeyring[String(identity.address).toLowerCase()] = identity.x25519;
+}
+
 let uiPrefs = { 
   mode: 'dark', 
   neon: null, 
@@ -127,6 +164,12 @@ let uiPrefs = {
   saveSent: true,
   sigRich: true,
   sigAbove: false,
+  // Optional networked features. Both default OFF: DOM Mail is purely local
+  // until the user deliberately trades that away. See Settings > Network.
+  pgp: false,
+  pgpSign: false,
+  relay: false,
+  relayUrl: '',
 };
 
 const $ = (s) => document.querySelector(s);
@@ -195,6 +238,18 @@ const el = {
   setSaveSent: $('#setSaveSent'),
   manualPollBtn: $('#manualPollBtn'),
   flushOutboxBtn: $('#flushOutboxBtn'),
+  // Optional networked features (off by default)
+  setPgp: $('#setPgp'),
+  setPgpSign: $('#setPgpSign'),
+  pgpState: $('#pgpState'),
+  optPgp: $('#optPgp'),
+  setRelay: $('#setRelay'),
+  setRelayUrl: $('#setRelayUrl'),
+  relayState: $('#relayState'),
+  relayStatus: $('#relayStatus'),
+  optRelay: $('#optRelay'),
+  relayConnectBtn: $('#relayConnectBtn'),
+  relayDisconnectBtn: $('#relayDisconnectBtn'),
 };
 
 function toast(msg, ms = 2600) {
@@ -313,8 +368,91 @@ function applyUiPrefs() {
   el.setAutoReceive.checked = uiPrefs.autoReceive;
   el.setSaveSent.checked = uiPrefs.saveSent;
 
+  paintOptionalPrefs();
+
   if (checkLegalBannerDismissed() && el.legalBanner) {
     el.legalBanner.hidden = true;
+  }
+}
+
+/** Reflect the optional-feature prefs into the switches and panels. */
+function paintOptionalPrefs() {
+  if (el.setPgp) {
+    el.setPgp.checked = uiPrefs.pgp;
+    el.setPgpSign.checked = uiPrefs.pgpSign;
+    el.setPgpSign.disabled = !uiPrefs.pgp;
+    el.pgpState.textContent = uiPrefs.pgp ? 'On' : 'Off';
+    el.optPgp.classList.toggle('is-on', uiPrefs.pgp);
+  }
+  if (el.setRelay) {
+    el.setRelay.checked = uiPrefs.relay;
+    el.setRelayUrl.value = uiPrefs.relayUrl || '';
+    el.setRelayUrl.disabled = !uiPrefs.relay;
+    el.relayState.textContent = uiPrefs.relay ? 'On' : 'Off';
+    el.optRelay.classList.toggle('is-on', uiPrefs.relay);
+    const live = relay?.status || 'disabled';
+    el.relayConnectBtn.disabled = !uiPrefs.relay;
+    el.relayDisconnectBtn.disabled = !uiPrefs.relay;
+    if (live !== 'connected' && live !== 'connecting') el.relayConnectBtn.disabled = false;
+  }
+}
+
+function bindOptionalEvents() {
+  if (el.setPgp) {
+    el.setPgp.addEventListener('change', () => {
+      uiPrefs.pgp = el.setPgp.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      toast(uiPrefs.pgp
+        ? 'Armored encryption ON — mail will refuse to send without recipient keys'
+        : 'Armored encryption off — mail is sent unencrypted');
+    });
+    el.setPgpSign.addEventListener('change', () => {
+      uiPrefs.pgpSign = el.setPgpSign.checked;
+      saveUiPrefs();
+    });
+  }
+
+  if (el.setRelay) {
+    el.setRelay.addEventListener('change', () => {
+      uiPrefs.relay = el.setRelay.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      if (!uiPrefs.relay) {
+        relay?.shutdown();
+        relay = null;
+        paintRelayStatus('disabled');
+        toast('Relay off — DOM Mail is local only');
+      } else {
+        syncRelay();
+        toast('Relay enabled — start it when you are ready');
+      }
+    });
+
+    el.setRelayUrl.addEventListener('change', () => {
+      uiPrefs.relayUrl = el.setRelayUrl.value.trim();
+      saveUiPrefs();
+      if (relay) relay.url = uiPrefs.relayUrl;
+      if (uiPrefs.relay) syncRelay();
+    });
+
+    el.relayConnectBtn.addEventListener('click', () => {
+      uiPrefs.relayUrl = el.setRelayUrl.value.trim();
+      uiPrefs.relay = true;
+      saveUiPrefs();
+      el.setRelay.checked = true;
+      paintOptionalPrefs();
+      syncRelay();
+      if (!relay?.connect()) {
+        toast('Relay could not start — check the URL');
+      }
+    });
+
+    el.relayDisconnectBtn.addEventListener('click', () => {
+      relay?.disconnect('stopped by you');
+      paintOptionalPrefs();
+      toast('Relay disconnected');
+    });
   }
 }
 
@@ -464,6 +602,12 @@ async function openReader(box, id) {
   const existing = page.querySelector('.reader');
   if (existing) existing.remove();
 
+  // Learn the sender's key from any DOM Mail identity block they sent, so we
+  // can reply to them encrypted later. No key server involved.
+  for (const a of m.from || []) rememberPgpKey(a);
+
+  const crypto = await tryDecryptRecord(m);
+
   const div = document.createElement('div');
   div.className = 'reader';
   const who = box === 'inbox' ? addrListLabel(m.from) : addrListLabel(m.to);
@@ -474,6 +618,7 @@ async function openReader(box, id) {
   div.innerHTML = `
     <h2>${escapeHtml(m.subject || '(no subject)')}</h2>
     <p class="meta">${escapeHtml(who)} &middot; ${new Date(m.date).toLocaleString()}</p>
+    ${crypto ? `<p class="crypto-tag${/INVALID|no key/.test(crypto) ? ' crypto-tag--bad' : ''}">${escapeHtml(crypto)}</p>` : ''}
     <div class="body">${body}</div>
     <div class="acts">
       ${box === 'inbox' ? '<button class="pill" data-act="reply" type="button">Reply</button>' : ''}
@@ -615,6 +760,126 @@ async function saveDraft() {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * optional: armored encryption (PGP) and WebSocket relay
+ *
+ * Both are opt-in and default OFF. The relay is constructed lazily so that
+ * simply loading the app performs no network activity whatsoever.
+ * ------------------------------------------------------------------ */
+
+/**
+ * If a received body is one of our armored messages and we hold the key,
+ * decrypt it in place. Returns a short label for the UI, or null.
+ */
+async function tryDecryptRecord(record) {
+  if (!record?.bodyText || !/-----BEGIN PGP MESSAGE-----/.test(record.bodyText)) return null;
+  if (!engine?.identity?.x25519) return 'encrypted';
+  try {
+    const { text, signed, signatureValid } = await decryptMessage(
+      record.bodyText,
+      fromBase64(engine.identity.x25519),
+      fromBase64(engine.identity.x25519),
+    );
+    record.bodyText = text;
+    record.bodyIsHtml = false;
+    record.decrypted = true;
+    record.signed = signed;
+    record.signatureValid = signatureValid;
+    return signed
+      ? (signatureValid ? 'encrypted · signature verified' : 'encrypted · SIGNATURE INVALID')
+      : 'encrypted · decrypted';
+  } catch {
+    return 'encrypted · no key for this message';
+  }
+}
+
+/** Build (or tear down) the relay client to match the current prefs. */
+function syncRelay() {
+  if (!uiPrefs.relay) {
+    if (relay) {
+      relay.shutdown();
+      relay = null;
+    }
+    paintRelayStatus('disabled');
+    return;
+  }
+  if (!relay) {
+    relay = createRelayClient({
+      enabled: true,
+      url: uiPrefs.relayUrl,
+      onStatus: (status, detail) => {
+        paintRelayStatus(status, detail);
+        if (status === 'connected' && engine?.identity) {
+          relay?.setIdentity(engine.identity);
+          relay?.connect(); // completes the hello with the address
+        }
+      },
+      onMessage: (frame) => { void ingestRelayMail(frame); },
+      onError: (err) => {
+        paintRelayStatus('error', err?.message);
+        toast(`Relay: ${err.message}`);
+      },
+    });
+  }
+  relay.enabled = true;
+  relay.url = uiPrefs.relayUrl;
+  if (engine?.identity) relay.setIdentity(engine.identity);
+}
+
+function paintRelayStatus(status, detail) {
+  if (!el.relayStatus) return;
+  el.relayStatus.dataset.state = status;
+  el.relayStatus.textContent = detail ? `${status} — ${detail}` : status;
+  el.relayStatus.title = detail || '';
+}
+
+/** Deliver a mail frame pushed by the relay into the inbox. */
+async function ingestRelayMail(frame) {
+  if (!engine || !frame?.mail?.raw) return;
+  try {
+    await engine.deliver(frame.mail.raw);
+    await refreshAll();
+    toast(`Relay: received “${frame.mail.subject || '(no subject)'}”`);
+  } catch (e) {
+    console.error('relay ingest failed:', e);
+    toast('Relay: could not deliver the message');
+  }
+}
+
+/** Push a sent message to the relay, if enabled. Never blocks the send path. */
+function publishToRelay(record) {
+  if (!uiPrefs.relay || !relay || !record?.raw) return;
+  const res = relay.publish({
+    subject: record.subject || '',
+    from: record.from?.[0]?.address || null,
+    to: (record.to || []).map((a) => a.address),
+    raw: record.raw,
+  });
+  if (res.queued) toast(`Relay offline — ${res.depth} message(s) queued`);
+}
+
+/**
+ * Load the X25519 public keys we know for a set of recipient addresses.
+ * DOM Mail only has keys for identities we have seen; anything else is
+ * reported so the user is never silently sent in the clear.
+ */
+function keyringFor(addresses) {
+  const ring = pgpKeyring;
+  const found = [];
+  const missing = [];
+  for (const addr of addresses) {
+    const key = ring[String(addr).toLowerCase()];
+    if (key) found.push({ address: addr, publicKey: fromBase64(key) });
+    else missing.push(addr);
+  }
+  return { found, missing };
+}
+
+/** Recipient addresses in scope for PGP: To, Cc and Bcc. */
+function pgpRecipients(c) {
+  return [...c.to, ...c.cc, ...c.bcc].map((a) => a.address);
+}
+
 function parseAddr(val) {
   if (!val) return [];
   return val.split(/[,;]/).map((s) => s.trim()).filter(Boolean).map((address) => {
@@ -642,25 +907,62 @@ async function sendCompose() {
     return;
   }
 
+  const cc = parseAddr(c.cc);
+  const bcc = parseAddr(c.bcc);
+
   try {
     const sig = uiPrefs.autoSig ? await engine.store.get('signature') : '';
-    const body = sig ? `${c.text}\n\n${sig}` : c.text;
+    let body = sig ? `${c.text}\n\n${sig}` : c.text;
+    let html = el.editor.innerHTML;
 
     const headers = {};
     if (uiPrefs.reqSentConfirm && engine.identity) {
       headers['Disposition-Notification-To'] = engine.identity.address;
     }
 
-    await engine.send({
+    /*
+     * PGP is applied per-recipient over the body. If we do not hold a public
+     * key for every recipient we refuse rather than quietly sending part of
+     * the mail in the clear: a silent downgrade is worse than a hard failure.
+     */
+    let encryptedFor = 0;
+    if (uiPrefs.pgp) {
+      const all = [...to, ...cc, ...bcc].map((a) => a.address);
+      const { found, missing } = keyringFor(all);
+      if (missing.length) {
+        showValidation([
+          `No public key known for: ${missing.join(', ')}.`,
+          'DOM Mail will not send in the clear while armored encryption is on.',
+          'Send the recipient a public key first, or turn PGP off in Settings > Network.',
+        ]);
+        return;
+      }
+      const armored = await encryptMessage(body, found, {
+        sign: uiPrefs.pgpSign && engine.identity,
+        signer: engine.identity
+          ? { privateKey: fromBase64(engine.identity.ed25519), publicKey: fromBase64(engine.identity.x25519) }
+          : undefined,
+      });
+      // Advertise the format so a receiving DOM Mail peer knows to decrypt.
+      headers['X-DOM-Mail-Encryption'] = PGP.ARMOR_TYPE;
+      body = armored;
+      // The HTML alternative would leak the plaintext, so drop it.
+      html = '';
+      encryptedFor = found.length;
+    }
+
+    const record = await engine.send({
       to,
-      cc: parseAddr(c.cc),
-      bcc: parseAddr(c.bcc),
+      cc,
+      bcc,
       subject: c.subject,
       text: body,
-      html: el.editor.innerHTML,
+      html,
       attachments: composeAttachments,
       headers,
     }, uiPrefs.saveSent ? 'outbox' : null);
+
+    publishToRelay(record);
 
     if (composeDraftId) {
       await engine.remove('drafts', composeDraftId);
@@ -668,7 +970,10 @@ async function sendCompose() {
     }
 
     closeCompose();
-    toast(uiPrefs.saveSent ? 'Sent (saved to Outbox)' : 'Sent (not saved)');
+    const bits = [];
+    bits.push(uiPrefs.saveSent ? 'Saved to Outbox' : 'Not saved');
+    if (encryptedFor) bits.push(`encrypted for ${encryptedFor} recipient(s)`);
+    toast(`Sent — ${bits.join(' · ')}`);
     await refreshAll();
     showPage('outbox');
   } catch (e) {
@@ -1314,6 +1619,7 @@ async function init() {
   loadUiPrefs();
   applyUiPrefs();
   bindEvents();
+  bindOptionalEvents();
 
   // Initialize security systems with timeout and graceful degradation
   try {
@@ -1435,10 +1741,13 @@ async function initMainApp() {
     el.setDomain.value = engine.identity.domain;
     const sig = await store.get('signature');
     if (sig) el.setSig.value = sig;
+    rememberPgpKey(engine.identity);
     hideOnboarding();
     await refreshAll();
     startPolling();
     showPage('compose');
+    // Connect the relay only if the user previously opted in.
+    if (uiPrefs.relay) syncRelay();
   } else {
     showOnboarding();
   }

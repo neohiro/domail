@@ -21,6 +21,39 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_FILE = join(__dirname, '.domail-cli.json');
+const CONFIG_FILE = join(__dirname, '.domail-cli-config.json');
+
+/**
+ * Headless settings. Both optional networked features default to OFF, exactly
+ * as in the browser build, so a CLI user gets the same local-only default.
+ * Persisted beside the mail file so the choice survives restarts.
+ */
+const DEFAULTS = {
+  pgp: false,
+  pgpSign: false,
+  relay: false,
+  relayUrl: '',
+};
+
+function loadConfig() {
+  if (!existsSync(CONFIG_FILE)) return { ...DEFAULTS };
+  try {
+    return { ...DEFAULTS, ...JSON.parse(readFileSync(CONFIG_FILE, 'utf8')) };
+  } catch {
+    return { ...DEFAULTS };
+  }
+}
+
+function saveConfig(cfg) {
+  writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
+}
+
+function printDisclosure(title, lines) {
+  console.log();
+  console.log(`  ${title}`);
+  for (const l of lines) console.log(`  ${l}`);
+  console.log();
+}
 
 function loadStore() {
   if (existsSync(DATA_FILE)) {
@@ -116,17 +149,77 @@ function showMessage(engine, id) {
 
 async function interactive(engine) {
   const identity = engine.identity || { address: 'anonymous@domail.space', name: 'Anonymous' };
+  const cfg = loadConfig();
   console.log();
   console.log('  DOM Mail CLI');
   console.log(`  Identity: ${identity.address}`);
+  console.log(`  Armored encryption (PGP): ${cfg.pgp ? 'ON' : 'off'}`);
+  console.log(`  WebSocket relay: ${cfg.relay ? 'ON' : 'off'}`);
   console.log();
-  console.log('  Commands: inbox, outbox, drafts, read <id>, compose, send <id>, wipe, quit');
+  console.log('  Commands: inbox, outbox, drafts, read <id>, compose, send <id>,');
+  console.log('            pgp [on|off|status], relay [on|off|url|status], wipe, quit');
   console.log();
 
   const readline = await import('node:readline');
   const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
 
   const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
+
+  async function doPgp(arg) {
+    const c = loadConfig();
+    if (!arg || arg === 'status') {
+      console.log(`PGP armored encryption is ${c.pgp ? 'ON' : 'off'}.`);
+      if (c.pgp) printDisclosure('Metadata is still exposed:', [
+        'Encrypting the body does not hide From, To, Subject, Date or size.',
+        'This armor will NOT decrypt in GnuPG.',
+      ]);
+      return;
+    }
+    if (arg === 'on' || arg === 'off') {
+      c.pgp = arg === 'on';
+      saveConfig(c);
+      console.log(`PGP armored encryption is now ${c.pgp ? 'ON' : 'off'}.`);
+      if (c.pgp) printDisclosure('Before you continue:', [
+        'This is OpenPGP-compatible armor around DOM Mail\'s own packet format.',
+        'It will not decrypt in GnuPG.',
+        'Mail will REFUSE to send if a recipient public key is unknown,',
+        'rather than quietly falling back to plaintext.',
+        'From/To/Subject/Date remain visible in the envelope.',
+      ]);
+      return;
+    }
+    console.log('Usage: pgp [on|off|status]');
+  }
+
+  async function doRelay(arg) {
+    const c = loadConfig();
+    if (!arg || arg === 'status') {
+      console.log(`WebSocket relay is ${c.relay ? 'ON' : 'off'}${c.relayUrl ? ` (${c.relayUrl})` : ''}.`);
+      if (c.relay) printDisclosure('Relay risks:', [
+        'Your IP and online times are visible to the relay operator.',
+        'On Tor this defeats the purpose entirely.',
+        'Traffic analysis remains possible even with an encrypted body.',
+        'If PGP is off, the relay reads the envelope in plaintext.',
+        'A malicious relay can drop, replay, reorder or censor mail.',
+        'DOM Mail stops being local-only and stops working offline.',
+      ]);
+      return;
+    }
+    if (arg === 'on' || arg === 'off') {
+      c.relay = arg === 'on';
+      saveConfig(c);
+      console.log(`WebSocket relay is now ${c.relay ? 'ON' : 'off'}.`);
+      if (c.relay) printDisclosure('Relay risks:', [
+        'Your IP and online times become visible to the relay operator.',
+        'On Tor this defeats the purpose entirely.',
+        'A malicious relay can drop, replay, reorder or censor mail.',
+      ]);
+      return;
+    }
+    c.relayUrl = arg;
+    saveConfig(c);
+    console.log(`Relay URL set to ${arg}`);
+  }
 
   while (true) {
     const input = await ask('domail> ');
@@ -161,18 +254,20 @@ async function interactive(engine) {
       const id = args[0];
       if (!id) { console.log('Usage: read <id>'); continue; }
       showMessage(engine, id);
+    } else if (cmd === 'pgp') {
+      await doPgp(args[0]);
+    } else if (cmd === 'relay') {
+      await doRelay(args.join(' '));
     } else if (cmd === 'compose') {
       const to = await ask('To: ');
       const subject = await ask('Subject: ');
       const body = await ask('Body (end with blank line): ');
       const msg = {
         from: identity,
-        to: to.split(',').map((s) => ({ address: s.trim(), name: '' })),
+        to: to.split(/[,;]/).map((s) => ({ address: s.trim(), name: '' })).filter((a) => a.address),
         subject,
         text: body,
       };
-      const raw = buildMessage(msg);
-      const parsed = parseMessage(raw);
       await engine.send(msg, 'outbox');
       console.log(`Sent to ${to}`);
     } else if (cmd === 'wipe') {
@@ -227,6 +322,47 @@ if (!cmd || cmd === 'interactive') {
 } else if (cmd === 'wipe') {
   await engine.wipe();
   console.log('All data destroyed.');
+} else if (cmd === 'pgp') {
+  const c = loadConfig();
+  const arg = args[0];
+  if (!arg || arg === 'status') {
+    console.log(`PGP armored encryption is ${c.pgp ? 'ON' : 'off'}.`);
+    if (c.pgp) {
+      console.log('  NOTE: metadata (From/To/Subject/Date/size) is still exposed.');
+      console.log('  NOTE: this armor will NOT decrypt in GnuPG.');
+    }
+  } else if (arg === 'on' || arg === 'off') {
+    c.pgp = arg === 'on';
+    saveConfig(c);
+    console.log(`PGP armored encryption is now ${c.pgp ? 'ON' : 'off'}.`);
+    if (c.pgp) {
+      console.log('  WARNING: mail will refuse to send when a recipient key is unknown.');
+      console.log('  WARNING: this armor will NOT decrypt in GnuPG.');
+      console.log('  WARNING: envelope metadata is still exposed.');
+    }
+  } else {
+    console.error('Usage: node cli/domail.mjs pgp [on|off|status]');
+    process.exit(1);
+  }
+} else if (cmd === 'relay') {
+  const c = loadConfig();
+  const arg = args.join(' ');
+  if (!arg || arg === 'status') {
+    console.log(`WebSocket relay is ${c.relay ? 'ON' : 'off'}${c.relayUrl ? ` (${c.relayUrl})` : ''}.`);
+    if (c.relay) {
+      console.log('  WARNING: your IP and online times are visible to the relay operator.');
+      console.log('  WARNING: on Tor this defeats the purpose entirely.');
+      console.log('  WARNING: a malicious relay can drop, replay, reorder or censor mail.');
+    }
+  } else if (arg === 'on' || arg === 'off') {
+    c.relay = arg === 'on';
+    saveConfig(c);
+    console.log(`WebSocket relay is now ${c.relay ? 'ON' : 'off'}.`);
+  } else {
+    c.relayUrl = arg;
+    saveConfig(c);
+    console.log(`Relay URL set to ${arg}`);
+  }
 } else {
-  console.log('Usage: node cli/domail.mjs [inbox|outbox|read <id>|compose|wipe|interactive]');
+  console.log('Usage: node cli/domail.mjs [inbox|outbox|read <id>|compose|wipe|pgp|relay|interactive]');
 }

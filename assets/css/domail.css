@@ -1054,3 +1054,177 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
     height: 2.2rem;
   }
 }
+
+/* --------------------- optional networked features --------------------- */
+
+.opt-head { margin-bottom: 1.25rem; }
+.opt-lede {
+  margin: .4rem 0 0;
+  max-width: 62ch;
+  color: var(--fg-muted);
+  font-size: .82rem;
+  line-height: 1.55;
+}
+
+.opt {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: .95rem 1rem;
+  margin-bottom: 1rem;
+  background: color-mix(in oklab, var(--bg-elev) 55%, transparent);
+  transition: border-color var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+/* An enabled option is called out immediately: the whole panel warms up. */
+.opt.is-on {
+  border-color: var(--line-solid);
+  background: color-mix(in oklab, var(--neon) 6%, var(--bg-elev));
+}
+
+.opt-head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.opt-name {
+  margin: 0;
+  font-size: .95rem;
+  font-weight: 620;
+  letter-spacing: -.01em;
+}
+.opt-title {
+  margin: 0 0 .3rem;
+  font-size: .78rem;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-faint);
+}
+
+/* switch */
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: .45rem;
+  cursor: pointer;
+  user-select: none;
+}
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-track {
+  width: 2.5rem;
+  height: 1.35rem;
+  border-radius: 999px;
+  border: 1px solid var(--line-solid);
+  background: color-mix(in oklab, var(--bg) 70%, transparent);
+  position: relative;
+  transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease);
+}
+.switch-track::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 12%;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 999px;
+  background: var(--fg-faint);
+  transform: translateY(-50%);
+  transition: transform var(--fast) var(--ease), background var(--fast) var(--ease);
+}
+.switch input:checked + .switch-track {
+  background: color-mix(in oklab, var(--neon) 34%, transparent);
+  border-color: var(--neon);
+}
+.switch input:checked + .switch-track::after {
+  transform: translate(1.05rem, -50%);
+  background: var(--neon);
+}
+.switch input:focus-visible + .switch-track {
+  outline: 2px solid var(--line-solid);
+  outline-offset: 2px;
+}
+.switch-label {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--fg-muted);
+  min-width: 2.2rem;
+}
+
+/* warnings */
+.warn {
+  margin-top: .8rem;
+  padding: .7rem .85rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in oklab, #e0a11f 34%, transparent);
+  background: color-mix(in oklab, #e0a11f 9%, transparent);
+  font-size: .78rem;
+  line-height: 1.55;
+  color: var(--fg-muted);
+}
+.warn p { margin: 0 0 .45rem; }
+.warn p:last-child { margin-bottom: 0; }
+.warn ul { margin: .45rem 0; padding-left: 1.1rem; }
+.warn li { margin-bottom: .3rem; }
+.warn code {
+  font-family: var(--mono);
+  font-size: .72rem;
+  padding: .05rem .25rem;
+  border-radius: 4px;
+  background: color-mix(in oklab, var(--neon) 12%, transparent);
+}
+.warn-detail { color: var(--fg-faint); font-size: .74rem; }
+.warn-tag {
+  display: inline-block;
+  font-size: .62rem;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-weight: 700;
+  padding: .12rem .4rem;
+  border-radius: 4px;
+  margin-bottom: .45rem;
+  color: #1a1508;
+  background: #e0a11f;
+}
+.warn--danger {
+  border-color: color-mix(in oklab, #e01f26 40%, transparent);
+  background: color-mix(in oklab, #e01f26 9%, transparent);
+}
+.warn--danger .warn-tag {
+  color: #fff;
+  background: #e01f26;
+}
+/* Once a feature is on, its warning turns red so the trade-off stays visible. */
+.opt.is-on .warn { border-color: color-mix(in oklab, #e01f26 34%, transparent); }
+
+#relayStatus { text-transform: capitalize; }
+#relayStatus[data-state="connected"] { color: var(--neon); border-color: var(--neon); }
+#relayStatus[data-state="error"] { color: #ff8080; border-color: #e01f26; }
+
+@media (max-width: 30rem) {
+  .opt { padding: .8rem; }
+  .opt-head-row { align-items: flex-start; }
+}
+
+.crypto-tag {
+  display: inline-block;
+  margin: .1rem 0 .55rem;
+  padding: .15rem .5rem;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-family: var(--mono);
+  letter-spacing: .02em;
+  color: var(--neon);
+  border: 1px solid color-mix(in oklab, var(--neon) 45%, transparent);
+  background: color-mix(in oklab, var(--neon) 10%, transparent);
+}
+.crypto-tag--bad {
+  color: #ff8080;
+  border-color: color-mix(in oklab, #e01f26 55%, transparent);
+  background: color-mix(in oklab, #e01f26 12%, transparent);
+}
