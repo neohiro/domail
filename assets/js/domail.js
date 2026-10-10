@@ -1310,69 +1310,114 @@ async function init() {
   loadUiPrefs();
   applyUiPrefs();
   bindEvents();
-  await initSecuritySystems();
 
+  // Initialize security systems with timeout and graceful degradation
   try {
-    const store = indexedDbStore(DB_NAME);
-    const encryptedStore = new EncryptedStore(store);
-    await encryptedStore._ensureInit();
+    await Promise.race([
+      initSecuritySystems(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Security systems init timeout')), 5000))
+    ]);
+  } catch (e) {
+    console.warn('Security systems init failed, continuing without:', e);
+    toast('Some security features unavailable');
+  }
 
-    // Check if salt exists (meaning storage is encrypted)
-    const salt = await store.get('__salt__');
-    if (salt) {
-      // Prompt for passphrase
-      if (el.passphraseModal) el.passphraseModal.hidden = false;
-      return;
-    }
+  // Initialize main app with robust error handling
+  await initMainApp();
+}
 
-    engine = new MailEngine(store);
-    await engine.load();
+async function initMainApp() {
+  let store;
+  let encryptedStore;
+  let useMemoryStore = false;
 
-    if (!engine.identity) {
-      const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
-      const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
-      const identity = await generateIdentity('Nova', local, domain);
-      await engine.setIdentity(identity);
-    }
+  // Try to initialize IndexedDB store with timeout
+  try {
+    await Promise.race([
+      (async () => {
+        store = indexedDbStore(DB_NAME);
+        encryptedStore = new EncryptedStore(store);
+        await Promise.race([
+          encryptedStore._ensureInit(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('EncryptedStore init timeout')), 5000))
+        ]);
+      })(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Store init timeout')), 5000))
+    ]);
+  } catch (e) {
+    console.warn('IndexedDB/EncryptedStore unavailable, falling back to memory store:', e);
+    useMemoryStore = true;
+    const { memoryStore } = await import('../core/mail.mjs');
+    store = memoryStore();
+    toast('Running in memory-only mode (data not persisted)');
+  }
 
-    if (engine.identity) {
-      el.identity.textContent = maskAddress(engine.identity.address);
-      el.identity.title = 'Click to copy full secure address';
-      el.keyView.textContent = publicKeyBlock(engine.identity);
-      el.setName.value = engine.identity.name;
-      el.setLocal.value = engine.identity.local;
-      el.setDomain.value = engine.identity.domain;
-      const sig = await store.get('signature');
-      if (sig) el.setSig.value = sig;
-      hideOnboarding();
-      await refreshAll();
-      startPolling();
-      showPage('compose');
-    } else {
-      showOnboarding();
+  // Check if storage is encrypted (has salt)
+  let isEncrypted = false;
+  try {
+    if (!useMemoryStore) {
+      const salt = await Promise.race([
+        store.get('__salt__'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Salt check timeout')), 3000))
+      ]);
+      isEncrypted = !!salt;
     }
   } catch (e) {
-    console.error('Init error:', e);
+    console.warn('Salt check failed:', e);
+  }
+
+  if (isEncrypted) {
+    if (el.passphraseModal) el.passphraseModal.hidden = false;
+    return;
+  }
+
+  // Initialize mail engine
+  const { MailEngine } = await import('../core/mail.mjs');
+  engine = new MailEngine(store);
+  
+  try {
+    await Promise.race([
+      engine.load(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Engine load timeout')), 5000))
+    ]);
+  } catch (e) {
+    console.warn('Engine load failed, starting fresh:', e);
+  }
+
+  // Auto-provision identity if missing
+  if (!engine.identity) {
     try {
-      const store = indexedDbStore(DB_NAME);
-      engine = new MailEngine(store);
-      await engine.load();
-      if (!engine.identity) {
-        const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
-        const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
-        const identity = await generateIdentity('Nova', local, domain);
-        await engine.setIdentity(identity);
-      }
-      if (engine.identity) {
-        el.identity.textContent = maskAddress(engine.identity.address);
-        el.keyView.textContent = publicKeyBlock(engine.identity);
-        hideOnboarding();
-        await refreshAll();
-        startPolling();
-        showPage('compose');
-        return;
-      }
-    } catch {}
+      await Promise.race([
+        (async () => {
+          const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
+          const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
+          const identity = await generateIdentity('Nova', local, domain);
+          await engine.setIdentity(identity);
+        })(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Identity generation timeout')), 10000))
+      ]);
+    } catch (e) {
+      console.error('Identity generation failed:', e);
+      toast('Failed to create identity');
+      showOnboarding();
+      return;
+    }
+  }
+
+  if (engine.identity) {
+    el.identity.textContent = maskAddress(engine.identity.address);
+    el.identity.title = 'Click to copy full secure address';
+    el.keyView.textContent = publicKeyBlock(engine.identity);
+    el.setName.value = engine.identity.name;
+    el.setLocal.value = engine.identity.local;
+    el.setDomain.value = engine.identity.domain;
+    const sig = await store.get('signature');
+    if (sig) el.setSig.value = sig;
+    hideOnboarding();
+    await refreshAll();
+    startPolling();
+    showPage('compose');
+  } else {
     showOnboarding();
   }
 }
