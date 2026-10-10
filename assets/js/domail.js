@@ -383,7 +383,7 @@ async function createIdentity() {
 }
 
 function showPage(name) {
-  const validPages = ['inbox', 'outbox', 'drafts', 'settings', 'wipe'];
+  const validPages = ['compose', 'inbox', 'outbox', 'drafts', 'settings', 'wipe'];
   if (!validPages.includes(name)) return;
   currentPage = name;
   for (const tab of el.tabs) {
@@ -1328,8 +1328,16 @@ async function init() {
     engine = new MailEngine(store);
     await engine.load();
 
+    if (!engine.identity) {
+      const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
+      const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
+      const identity = await generateIdentity('Nova', local, domain);
+      await engine.setIdentity(identity);
+    }
+
     if (engine.identity) {
-      el.identity.textContent = engine.identity.address;
+      el.identity.textContent = maskAddress(engine.identity.address);
+      el.identity.title = 'Click to copy full secure address';
       el.keyView.textContent = publicKeyBlock(engine.identity);
       el.setName.value = engine.identity.name;
       el.setLocal.value = engine.identity.local;
@@ -1339,11 +1347,32 @@ async function init() {
       hideOnboarding();
       await refreshAll();
       startPolling();
+      showPage('compose');
     } else {
       showOnboarding();
     }
   } catch (e) {
     console.error('Init error:', e);
+    try {
+      const store = indexedDbStore(DB_NAME);
+      engine = new MailEngine(store);
+      await engine.load();
+      if (!engine.identity) {
+        const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
+        const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
+        const identity = await generateIdentity('Nova', local, domain);
+        await engine.setIdentity(identity);
+      }
+      if (engine.identity) {
+        el.identity.textContent = maskAddress(engine.identity.address);
+        el.keyView.textContent = publicKeyBlock(engine.identity);
+        hideOnboarding();
+        await refreshAll();
+        startPolling();
+        showPage('compose');
+        return;
+      }
+    } catch {}
     showOnboarding();
   }
 }
