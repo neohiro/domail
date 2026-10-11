@@ -33,7 +33,53 @@ const DEFAULTS = {
   pgpSign: false,
   relay: false,
   relayUrl: '',
+  // Shoulder-surfing protection. Off by default so the CLI stays a usable
+  // mail client, on when you are reading over someone's shoulder or sharing a
+  // terminal capture.
+  mask: false,
+  netDirect: true,
+  netTor: false,
+  netI2p: false,
+  netEnsIpfs: false,
+  netRadicle: false,
+  netYggdrasil: false,
+  netNostr: false,
+  netReticulum: false,
+  netWebRTC: false,
+  netBLE: false,
+  netDNS: false,
+  netSneakernet: false,
+  netFederation: false,
 };
+
+/** Mask an address the same way the browser build does. */
+function maskAddress(addr) {
+  const raw = String(addr || '');
+  if (!raw) return '';
+  const at = raw.lastIndexOf('@');
+  if (at <= 0) return raw;
+  const local = raw.slice(0, at);
+  const domain = raw.slice(at + 1);
+  const dot = domain.indexOf('.');
+  const head = local.length <= 1 ? '*' : local[0];
+  const maskedLocal = head + '*'.repeat(Math.min(local.length - 1, 6));
+  if (dot <= 0) return `${maskedLocal}@${domain[0] || '*'}${'*'.repeat(6)}`;
+  const name = domain.slice(0, dot);
+  const tld = domain.slice(dot + 1);
+  const maskedName = (name.length <= 1 ? '*' : name[0]) + '*'.repeat(Math.min(name.length - 1, 6));
+  return `${maskedLocal}@${maskedName}.${tld}`;
+}
+
+let cfgCache = null;
+function config() {
+  if (!cfgCache) cfgCache = loadConfig();
+  return cfgCache;
+}
+
+function showAddr(addr) {
+  const c = config();
+  return c.mask ? maskAddress(addr) : addr;
+}
 
 function loadConfig() {
   if (!existsSync(CONFIG_FILE)) return { ...DEFAULTS };
@@ -103,7 +149,7 @@ function showInbox(engine) {
     console.log('│  (empty)                                                          │');
   } else {
     for (const m of inbox) {
-      const from = m.from?.[0]?.address || 'unknown';
+      const from = showAddr(m.from?.[0]?.address || 'unknown');
       const subj = m.subject || '(no subject)';
       const read = m.read ? ' ' : '●';
       console.log(`│ ${read} ${pad(from, 20)} ${pad(subj, 35)} │`);
@@ -119,7 +165,7 @@ function showOutbox(engine) {
     console.log('│  (empty)                                                          │');
   } else {
     for (const m of outbox) {
-      const to = m.to?.[0]?.address || 'unknown';
+      const to = showAddr(m.to?.[0]?.address || 'unknown');
       const subj = m.subject || '(no subject)';
       console.log(`│   ${pad(to, 20)} ${pad(subj, 35)} │`);
     }
@@ -149,14 +195,15 @@ function showMessage(engine, id) {
 
 async function interactive(engine) {
   const identity = engine.identity || { address: 'anonymous@domail.space', name: 'Anonymous' };
-  const cfg = loadConfig();
+  cfgCache = loadConfig();
+  const cfg = cfgCache;
   console.log();
   console.log('  DOM Mail CLI');
-  console.log(`  Identity: ${identity.address}`);
+  console.log(`  Identity: ${showAddr(identity.address)}`);
   console.log(`  Armored encryption (PGP): ${cfg.pgp ? 'ON' : 'off'}`);
   console.log(`  WebSocket relay: ${cfg.relay ? 'ON' : 'off'}`);
   console.log();
-  console.log('  Commands: inbox, outbox, drafts, read <id>, compose, send <id>,');
+  console.log('  Commands: inbox, outbox, drafts, read <id>, compose, mask [on|off],');
   console.log('            pgp [on|off|status], relay [on|off|url|status], wipe, quit');
   console.log();
 
@@ -166,7 +213,8 @@ async function interactive(engine) {
   const ask = (q) => new Promise((resolve) => rl.question(q, resolve));
 
   async function doPgp(arg) {
-    const c = loadConfig();
+    cfgCache = loadConfig();
+    const c = cfgCache;
     if (!arg || arg === 'status') {
       console.log(`PGP armored encryption is ${c.pgp ? 'ON' : 'off'}.`);
       if (c.pgp) printDisclosure('Metadata is still exposed:', [
@@ -192,7 +240,8 @@ async function interactive(engine) {
   }
 
   async function doRelay(arg) {
-    const c = loadConfig();
+    cfgCache = loadConfig();
+    const c = cfgCache;
     if (!arg || arg === 'status') {
       console.log(`WebSocket relay is ${c.relay ? 'ON' : 'off'}${c.relayUrl ? ` (${c.relayUrl})` : ''}.`);
       if (c.relay) printDisclosure('Relay risks:', [
@@ -219,6 +268,56 @@ async function interactive(engine) {
     c.relayUrl = arg;
     saveConfig(c);
     console.log(`Relay URL set to ${arg}`);
+  }
+
+  async function doNetwork(net, val) {
+    cfgCache = loadConfig();
+    const c = cfgCache;
+    const validNets = ['direct', 'tor', 'i2p', 'ens', 'radicle', 'yggdrasil', 'nostr', 'reticulum', 'webrtc', 'ble', 'dns', 'sneakernet', 'federation'];
+    if (!net || net === 'status') {
+      console.log('Multi-Network & Advanced Transports (13 Vectors):');
+      console.log(`  Direct (80/443 TLS): ${c.netDirect !== false ? 'ON' : 'off'}`);
+      console.log(`  Tor Onion Service:   ${c.netTor ? 'ON' : 'off'}`);
+      console.log(`  I2P Eepsite:         ${c.netI2p ? 'ON' : 'off'}`);
+      console.log(`  ENS / IPFS Gateway:  ${c.netEnsIpfs ? 'ON' : 'off'}`);
+      console.log(`  Radicle P2P:         ${c.netRadicle ? 'ON' : 'off'}`);
+      console.log(`  Yggdrasil Mesh:      ${c.netYggdrasil ? 'ON' : 'off'}`);
+      console.log(`  Nostr Relay Sync:    ${c.netNostr ? 'ON' : 'off'}`);
+      console.log(`  Reticulum / LXMF:    ${c.netReticulum ? 'ON' : 'off'}`);
+      console.log(`  WebRTC P2P:          ${c.netWebRTC ? 'ON' : 'off'}`);
+      console.log(`  BLE Proximity Mesh:  ${c.netBLE ? 'ON' : 'off'}`);
+      console.log(`  DNS TXT Tunneling:   ${c.netDNS ? 'ON' : 'off'}`);
+      console.log(`  USB/QR Sneakernet:   ${c.netSneakernet ? 'ON' : 'off'}`);
+      console.log(`  Federation Gateway:  ${c.netFederation ? 'ON' : 'off'}`);
+      return;
+    }
+    const keyMap = {
+      direct: 'netDirect',
+      tor: 'netTor',
+      i2p: 'netI2p',
+      ens: 'netEnsIpfs',
+      radicle: 'netRadicle',
+      yggdrasil: 'netYggdrasil',
+      nostr: 'netNostr',
+      reticulum: 'netReticulum',
+      webrtc: 'netWebRTC',
+      ble: 'netBLE',
+      dns: 'netDNS',
+      sneakernet: 'netSneakernet',
+      federation: 'netFederation'
+    };
+    const key = keyMap[net.toLowerCase()];
+    if (!key) {
+      console.log(`Unknown network transport: ${net}. Valid: ${validNets.join(', ')}`);
+      return;
+    }
+    if (val === 'on' || val === 'off') {
+      c[key] = val === 'on';
+      saveConfig(c);
+      console.log(`${net} transport is now ${val.toUpperCase()}.`);
+    } else {
+      console.log(`${net} transport is currently ${c[key] ? 'ON' : 'off'}. Use: network ${net} [on|off]`);
+    }
   }
 
   while (true) {
@@ -253,11 +352,42 @@ async function interactive(engine) {
     } else if (cmd === 'read') {
       const id = args[0];
       if (!id) { console.log('Usage: read <id>'); continue; }
-      showMessage(engine, id);
+showMessage(engine, id);
+    } else if (cmd === 'mask') {
+      const c = loadConfig();
+      const arg = args[0];
+      if (!arg || arg === 'status') {
+        console.log(`Address masking is ${c.mask ? 'ON' : 'off'}.`);
+        if (!c.mask) console.log('  Turn on with: mask on');
+      } else if (arg === 'on' || arg === 'off') {
+        c.mask = arg === 'on';
+        saveConfig(c);
+        cfgCache = null;
+        console.log(`Address masking is now ${c.mask ? 'ON' : 'off'}.`);
+      } else {
+        console.log('Usage: mask [on|off|status]');
+      }
+} else if (cmd === 'mask') {
+  const c = loadConfig();
+  const arg = args[0];
+  if (!arg || arg === 'status') {
+    console.log(`Address masking is ${c.mask ? 'ON' : 'off'}.`);
+    if (!c.mask) console.log('  Turn on with: mask on');
+  } else if (arg === 'on' || arg === 'off') {
+    c.mask = arg === 'on';
+    saveConfig(c);
+    cfgCache = null;
+    console.log(`Address masking is now ${c.mask ? 'ON' : 'off'}.`);
+  } else {
+    console.error('Usage: node cli/domail.mjs mask [on|off|status]');
+    process.exit(1);
+  }
     } else if (cmd === 'pgp') {
       await doPgp(args[0]);
     } else if (cmd === 'relay') {
       await doRelay(args.join(' '));
+    } else if (cmd === 'network') {
+      await doNetwork(args[0], args[1]);
     } else if (cmd === 'compose') {
       const to = await ask('To: ');
       const subject = await ask('Subject: ');
@@ -322,6 +452,21 @@ if (!cmd || cmd === 'interactive') {
 } else if (cmd === 'wipe') {
   await engine.wipe();
   console.log('All data destroyed.');
+} else if (cmd === 'mask') {
+  const c = loadConfig();
+  const arg = args[0];
+  if (!arg || arg === 'status') {
+    console.log(`Address masking is ${c.mask ? 'ON' : 'off'}.`);
+    if (!c.mask) console.log('  Turn on with: mask on');
+  } else if (arg === 'on' || arg === 'off') {
+    c.mask = arg === 'on';
+    saveConfig(c);
+    cfgCache = null;
+    console.log(`Address masking is now ${c.mask ? 'ON' : 'off'}.`);
+  } else {
+    console.error('Usage: node cli/domail.mjs mask [on|off|status]');
+    process.exit(1);
+  }
 } else if (cmd === 'pgp') {
   const c = loadConfig();
   const arg = args[0];
@@ -364,5 +509,5 @@ if (!cmd || cmd === 'interactive') {
     console.log(`Relay URL set to ${arg}`);
   }
 } else {
-  console.log('Usage: node cli/domail.mjs [inbox|outbox|read <id>|compose|wipe|pgp|relay|interactive]');
+  console.log('Usage: node cli/domail.mjs [inbox|outbox|read <id>|compose|wipe|mask|pgp|relay|interactive]');
 }

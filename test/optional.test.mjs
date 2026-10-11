@@ -25,6 +25,7 @@ const pgp = await import('../core/pgp.mjs');
 const {
   crc24, armor, dearmor, ArmorError,
   encryptMessage, decryptMessage, signArmored, verifyArmored,
+  encryptWithPassphrase, decryptWithPassphrase, isPassphraseMessage,
 } = pgp;
 
 /* ------------------------------------------------------------------ *
@@ -242,6 +243,48 @@ test('detached signature over an armored block verifies', { skip: skipCrypto }, 
   assert.match(sig, /-----BEGIN PGP SIGNATURE-----/);
   assert.equal(await verifyArmored(text, sig, kp.publicKey), true);
   assert.equal(await verifyArmored('tampered', sig, kp.publicKey), false);
+});
+
+/* ------------------------------------------------------------------ *
+ * passphrase mode (works without recipient keys)
+ * ------------------------------------------------------------------ */
+
+test('a passphrase message roundtrips without any key material', { skip: skipCrypto }, async () => {
+  const armored = await encryptWithPassphrase('for any recipient', 'correct horse battery');
+  assert.match(armored, /-----BEGIN PGP MESSAGE-----/);
+  assert.equal(isPassphraseMessage(armored), true);
+  const out = await decryptWithPassphrase(armored, 'correct horse battery');
+  assert.equal(out.text, 'for any recipient');
+});
+
+test('a wrong passphrase fails to open the message', { skip: skipCrypto }, async () => {
+  const armored = await encryptWithPassphrase('secret', 'right');
+  await assert.rejects(() => decryptWithPassphrase(armored, 'wrong'), /authentication tag mismatch/);
+});
+
+test('passphrase mode rejects an empty passphrase', { skip: skipCrypto }, async () => {
+  await assert.rejects(() => encryptWithPassphrase('x', ''), /passphrase is required/);
+});
+
+test('a key-based message is not mistaken for a passphrase message', { skip: skipCrypto }, async () => {
+  const kp = sodium.crypto_box_keypair();
+  const armored = await encryptMessage('keyed', [{ address: 'a@b.c', publicKey: kp.publicKey }]);
+  assert.equal(isPassphraseMessage(armored), false);
+  await assert.rejects(() => decryptWithPassphrase(armored, 'anything'), /not passphrase-protected/);
+});
+
+test('passphrase mode roundtrips unicode and large bodies', { skip: skipCrypto }, async () => {
+  const small = await encryptWithPassphrase('héllo — 日本語 🔐', 'pw');
+  assert.equal((await decryptWithPassphrase(small, 'pw')).text, 'héllo — 日本語 🔐');
+  const big = 'y'.repeat(150000);
+  const armored = await encryptWithPassphrase(big, 'pw');
+  assert.equal((await decryptWithPassphrase(armored, 'pw')).text.length, big.length);
+});
+
+test('two passphrase encryptions of the same text differ', { skip: skipCrypto }, async () => {
+  const a = await encryptWithPassphrase('same', 'pw');
+  const b = await encryptWithPassphrase('same', 'pw');
+  assert.notEqual(a, b);
 });
 
 /* ------------------------------------------------------------------ *

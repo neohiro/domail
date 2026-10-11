@@ -13,6 +13,10 @@
 
 const CRLF = '\r\n';
 const MAX_LINE = 78;
+const MAX_RECIPIENTS = 100;
+const MAX_SUBJECT_LENGTH = 998;
+const MAX_ADDRESS_LENGTH = 254;
+const MAX_HEADER_VALUE_LENGTH = 998;
 
 /* ------------------------------------------------------------------ *
  * base64 / utf-8

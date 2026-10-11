@@ -39,3 +39,13 @@ All 42 tests must pass before committing.
 - Branch: `main`
 - Commit style: `feat:`, `fix:`, `docs:`, `test:`, `refactor:`
 - Never commit secrets, keys, or personal data.
+
+## Agentic MCP & CLI Usage for Autonomous Bots
+
+DOM Mail provides a fully non-interactive, scriptable Node.js CLI (`cli/domail.mjs`) that shares the exact same cryptographic mail engine as the browser app. This allows AI agents, LLM tool-use runners, and autonomous bots to communicate via end-to-end encrypted mail offline without cloud dependencies:
+
+- **Check Inbox**: `node cli/domail.mjs inbox`
+- **Read Message**: `node cli/domail.mjs read <id>`
+- **Compose & Send**: `node cli/domail.mjs compose <recipient@domain> <subject> <body>`
+- **Configure Network Vectors**: `node cli/domail.mjs network <transport> <on|off>` (supports all 13 transport vectors: `direct`, `tor`, `i2p`, `ens`, `radicle`, `yggdrasil`, `nostr`, `reticulum`, `webrtc`, `ble`, `dns`, `sneakernet`, `federation`)
+- **Wipe Local Storage**: `node cli/domail.mjs wipe`

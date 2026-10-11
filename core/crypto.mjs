@@ -29,9 +29,27 @@ export const CRYPTO = {
   NONCEBYTES: 24,
   MACBYTES: 16,
   SALTBYTES: 16,
+  /*
+   * The bundled libsodium.js exposes no password-hashing function at all
+   * (no crypto_pwhash / Argon2id, no scrypt) — only crypto_generichash
+   * (BLAKE2b). deriveKey() therefore prefers Argon2id when the host provides
+   * it and otherwise falls back to an iterated keyed-BLAKE2b construction.
+   * See KDF_ID_* below: the identifier is mixed into the AEAD associated data
+   * so data can never be silently reinterpreted under a different scheme.
+   */
   PWHASH_OPSLIMIT: 4,
   PWHASH_MEMLIMIT: 1073741824,
+  KDF_ITERATIONS: 120000,
 };
+
+export const KDF_ID_ARGON2ID = 1;
+export const KDF_ID_BLAKE2B = 2;
+
+/** True when the host libsodium provides Argon2id. */
+function hasArgon2id() {
+  assertSodium();
+  return typeof _sodium.crypto_pwhash === 'function';
+}
 
 function assertSodium() {
   if (!_sodium) throw new Error('libsodium not initialized. Call CRYPTO.init() first.');
@@ -51,14 +69,81 @@ export function zeroFill(buf) {
   if (buf && buf.fill) buf.fill(0);
 }
 
+/**
+ * Stretch a passphrase into a symmetric key.
+ *
+ * Prefers Argon2id when available; otherwise uses an iterated keyed-BLAKE2b
+ * construction, which the bundled libsodium can actually provide. Callers must
+ * bind `kdfInfo()` into their AEAD associated data so a key derived under one
+ * scheme is never accepted under the other.
+ *
+ * @param {string|Uint8Array} password
+ * @param {Uint8Array} salt
+ * @param {{opslimit?:number, memlimit?:number, keyLen?:number, iterations?:number}} opts
+ * @returns {Promise<Uint8Array>}
+ */
 export async function deriveKey(password, salt, opts = {}) {
   assertSodium();
-  const opslimit = opts.opslimit ?? CRYPTO.PWHASH_OPSLIMIT;
-  const memlimit = opts.memlimit ?? CRYPTO.PWHASH_MEMLIMIT;
+  if (!salt || salt.length < 8) throw new Error('deriveKey requires a salt of at least 8 bytes');
   const keyLen = opts.keyLen ?? CRYPTO.KEYBYTES;
   const pw = typeof password === 'string' ? new TextEncoder().encode(password) : password;
-  const key = _sodium.crypto_pwhash(keyLen, pw, salt, opslimit, memlimit, _sodium.crypto_pwhash_ALG_ARGON2ID13);
-  return key;
+
+  if (hasArgon2id()) {
+    const opslimit = opts.opslimit ?? CRYPTO.PWHASH_OPSLIMIT;
+    const memlimit = opts.memlimit ?? CRYPTO.PWHASH_MEMLIMIT;
+    return _sodium.crypto_pwhash(
+      keyLen, pw, salt, opslimit, memlimit, _sodium.crypto_pwhash_ALG_ARGON2ID13,
+    );
+  }
+
+  // Iterated keyed BLAKE2b. Not memory-hard; it trades that for portability.
+  const iterations = Math.max(1, opts.iterations ?? CRYPTO.KDF_ITERATIONS);
+  const counter = new Uint8Array(4);
+  let block = _sodium.crypto_generichash(keyLen, pw, salt);
+  for (let i = 0; i < iterations; i++) {
+    counter[0] = i & 0xff;
+    counter[1] = (i >>> 8) & 0xff;
+    counter[2] = (i >>> 16) & 0xff;
+    counter[3] = (i >>> 24) & 0xff;
+    const input = new Uint8Array(block.length + 4);
+    block.copyInto ? block.copyInto(input) : input.set(block);
+    input.set(counter, block.length);
+    block = _sodium.crypto_generichash(keyLen, input, salt);
+  }
+  return block;
+}
+
+/**
+ * Bytes to mix into AEAD associated data so the KDF scheme and parameters are
+ * authenticated. Both encryption and decryption must compute the same value or
+ * the tag check fails, which is exactly what we want.
+ */
+export function kdfInfo(salt, opts = {}) {
+  const id = hasArgon2id() ? KDF_ID_ARGON2ID : KDF_ID_BLAKE2B;
+  const iterations = opts.iterations ?? CRYPTO.KDF_ITERATIONS;
+  const memlimit = opts.memlimit ?? CRYPTO.PWHASH_MEMLIMIT;
+  const out = new Uint8Array(12);
+  out[0] = id;
+  out[1] = 0; out[2] = 0; out[3] = 0;
+  // Params, little-endian, so a future change cannot collide with old data.
+  out[4] = iterations & 0xff;
+  out[5] = (iterations >>> 8) & 0xff;
+  out[6] = (iterations >>> 16) & 0xff;
+  out[7] = (iterations >>> 24) & 0xff;
+  out[8] = memlimit & 0xff;
+  out[9] = (memlimit >>> 8) & 0xff;
+  out[10] = (memlimit >>> 16) & 0xff;
+  out[11] = (memlimit >>> 24) & 0xff;
+  return out;
+}
+
+/** Concatenate salt + kdfInfo into AEAD associated data. */
+export function kdfAad(salt, opts = {}) {
+  const info = kdfInfo(salt, opts);
+  const out = new Uint8Array(salt.length + info.length);
+  out.set(salt, 0);
+  out.set(info, salt.length);
+  return out;
 }
 
 export async function encrypt(key, plaintext, associatedData = new Uint8Array()) {

@@ -45,16 +45,6 @@
 <header id="chrome">
   <div class="chrome-row">
     <div class="chrome-left">
-      <button id="modeSwitch" class="round round--labelled" type="button"
-              aria-pressed="false" aria-label="Switch between dark and light theme">
-        <span class="round-knob"></span>
-        <span class="round-text">Theme</span>
-      </button>
-      <button id="overhaul" class="round round--labelled" type="button"
-              aria-label="Randomise the accent colour and style">
-        <span class="round-knob glyph" aria-hidden="true">&#9670;</span>
-        <span class="round-text">Style</span>
-      </button>
       <span class="brand">
         <img src="assets/img/logo.svg" alt="" width="18" height="18" aria-hidden="true">
         DOM Mail
@@ -90,13 +80,19 @@
     <div class="compose-container" style="display: flex; flex-direction: column; height: calc(100% - 3rem); background: var(--bg-elev); border-radius: var(--radius); border: 1px solid var(--line); overflow: hidden;">
       <div class="addr">
         <div class="addr-row"><label for="cTo">To</label>
-          <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="recipient@domain.tld" data-pii="true">
+          <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="recipient@domain.tld" data-pii="true"
+            onblur="if(!uiPrefs.showFullIdentity) this.value=maskAddress(this.value)"
+            onfocus="this.value=this.dataset.raw||this.value" oninput="this.dataset.raw=this.value">
         </div>
         <div class="addr-row"><label for="cCc">Cc</label>
-          <input id="cCc" type="text" autocomplete="off" spellcheck="false" placeholder="optional cc" data-pii="true">
+          <input id="cCc" type="text" autocomplete="off" spellcheck="false" placeholder="optional cc" data-pii="true"
+            onblur="if(!uiPrefs.showFullIdentity) this.value=maskAddress(this.value)"
+            onfocus="this.value=this.dataset.raw||this.value" oninput="this.dataset.raw=this.value">
         </div>
         <div class="addr-row"><label for="cBcc">Bcc</label>
-          <input id="cBcc" type="text" autocomplete="off" spellcheck="false" placeholder="optional bcc" data-pii="true">
+          <input id="cBcc" type="text" autocomplete="off" spellcheck="false" placeholder="optional bcc" data-pii="true"
+            onblur="if(!uiPrefs.showFullIdentity) this.value=maskAddress(this.value)"
+            onfocus="this.value=this.dataset.raw||this.value" oninput="this.dataset.raw=this.value">
         </div>
         <div class="addr-row"><label for="cSubject">Subject</label>
           <input id="cSubject" type="text" autocomplete="off" spellcheck="false" placeholder="Subject">
@@ -136,7 +132,26 @@
         <div class="emoji-grid"></div>
       </div>
 
-      <div id="editor" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" spellcheck="true" data-ph="Write your secure message here..."></div>
+      <div id="editor" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" spellcheck="true" data-ph="Write your secure message here..."
+            onblur="if(uiPrefs.bodyObfuscate && !uiPrefs.bodyObfuscateHoverReveal) this.dataset.raw=this.innerHTML; obfuscateBodyPII(this)"
+            onfocus="if(this.dataset.raw) this.innerHTML=this.dataset.raw; delete this.dataset.raw;"></div>
+
+      <div class="compose-networks" style="padding: 0.5rem 1rem; background: var(--bg); border-top: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: center; font-size: 0.85rem;">
+        <span class="minor" style="font-weight: 600;">Dispatch via networks:</span>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetDirect" type="checkbox" checked> Direct</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetTor" type="checkbox"> Tor</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetI2p" type="checkbox"> I2P</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetEnsIpfs" type="checkbox"> ENS/IPFS</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetRadicle" type="checkbox"> Radicle</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetYggdrasil" type="checkbox"> Yggdrasil</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetNostr" type="checkbox"> Nostr</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetReticulum" type="checkbox"> Reticulum</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetWebRTC" type="checkbox"> WebRTC</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetBLE" type="checkbox"> BLE</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetDNS" type="checkbox"> DNS</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetSneakernet" type="checkbox"> Sneakernet</label>
+        <label class="check" style="display:inline-flex; align-items:center; gap:0.25rem;"><input id="sendNetFederation" type="checkbox"> Federation</label>
+      </div>
 
       <div class="compose-foot">
         <span id="draftState" class="minor">draft autosaves</span>
@@ -179,6 +194,42 @@
     </div>
 
     <div class="subpage" data-sub="account">
+      <h2 class="minor">Appearance</h2>
+      <div class="field">
+        <span id="themeLabel">Theme</span>
+        <div class="seg" role="radiogroup" aria-labelledby="themeLabel">
+          <button type="button" class="seg__btn" data-theme="dark" role="radio" aria-checked="true">Dark</button>
+          <button type="button" class="seg__btn" data-theme="light" role="radio" aria-checked="false">Light</button>
+        </div>
+      </div>
+      <div class="field">
+        <span>Accent</span>
+        <div class="row">
+          <button id="overhaul" class="pill" type="button">Randomise accent</button>
+          <button id="resetAccent" class="pill" type="button">Reset accent</button>
+        </div>
+        <small class="minor">
+          Dark is the default. The accent colour drives borders, focus rings and highlights
+          across the whole interface.
+        </small>
+      </div>
+      <div class="swatches" id="accentSwatches" role="group" aria-label="Accent colour"></div>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Privacy</h2>
+      <label class="check"><input id="setShowFullAddr" type="checkbox">
+        Show full addresses and message text on screen
+      </label>
+      <small class="minor">
+        Off by default. Addresses are masked in lists and message headers, and message
+        bodies stay collapsed until you open them, so a screenshot or a shoulder-surfer
+        cannot capture readable content. Turning this on also disables the PII masking
+        that guards against screen theft.
+      </small>
+      <label class="check"><input id="setSuggestContacts" type="checkbox" checked>
+        Suggest known contacts while typing an address
+      </label>
+
+      <h2 class="minor" style="margin-top: 1.5rem;">Identity</h2>
       <label class="field"><span>Display name</span>
         <input id="setName" type="text" autocomplete="off" spellcheck="false" placeholder="Nova">
       </label>
@@ -302,6 +353,20 @@
           </label>
         </header>
         <label class="check"><input id="setPgpSign" type="checkbox"> Sign outgoing mail with my Ed25519 key</label>
+        <div class="field">
+          <span>Encrypt to non-DOM-Mail recipients</span>
+          <small class="minor">
+            Key-based encryption only reaches DOM Mail peers you already hold a key for.
+            To reach anyone else, protect the message with a shared passphrase they can
+            open in any DOM Mail client. Leave empty to send unencrypted.
+          </small>
+          <input id="setPgpPass" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="shared passphrase (optional)">
+          <small class="minor">
+            Kept in memory for this session only — it is never written to storage, so
+            you will be asked again after a reload.
+          </small>
+        </div>
         <div class="warn" id="pgpWarn" role="note">
           <span class="warn-tag">Not OpenPGP</span>
           <p>
@@ -315,6 +380,12 @@
             envelope. Whoever handles the message still sees <code>From</code>, <code>To</code>,
             <code>Subject</code>, <code>Date</code> and the size of the ciphertext. Timing analysis
             is possible regardless.
+          </p>
+          <p>
+            <strong>Two modes.</strong> <em>Key mode</em> seals to recipient X25519 keys and only
+            reaches DOM Mail peers. <em>Passphrase mode</em> needs nothing but a shared secret, so
+            any recipient who has DOM Mail can open it. Both are read by DOM Mail clients only —
+            GnuPG still cannot decrypt them.
           </p>
           <p class="warn-detail">
             Recipients must be DOM Mail peers whose X25519 public keys you have already obtained.
@@ -365,6 +436,87 @@
           </p>
         </div>
       </section>
+
+    <!-- ---------- GnuPG ---------- -->
+    <section class="opt" id="optGpg" aria-labelledby="optGpgTitle">
+      <header class="opt-head-row">
+        <h3 class="opt-name" id="optGpgTitle">GnuPG integration</h3>
+        <label class="switch">
+          <input id="setGpg" type="checkbox" aria-describedby="gpgWarn">
+          <span class="switch-track" aria-hidden="true"></span>
+          <span class="switch-label" id="gpgState">Off</span>
+        </label>
+      </header>
+      <div class="warn warn--danger" id="gpgWarn" role="note">
+        <span class="warn-tag">External dependency</span>
+        <p>Enabling GnuPG integration requires a local GnuPG installation. DOM Mail will invoke the <code>gpg</code> binary for encryption/decryption operations.</        </p>
+        <ul>
+          <li><strong>GnuPG must be installed separately</strong> and available in your system PATH.</li>
+          <li><strong>Keys are managed by GnuPG</strong>, not DOM Mail. Your existing keyring is used.</li>
+          <li><strong>Metadata is still exposed</strong> — the envelope (From, To, Subject, Date) remains visible to intermediaries.</li>
+          <li><strong>No passphrase storage</strong> — you will be prompted for your GnuPG passphrase when needed.</li>
+        </ul>
+        <p class="warn-detail">This is for users who already use GnuPG and want DOM Mail to interoperate with their existing keyring.</p>
+      </div>
+      </section>
+
+      <!-- ---------- Multi-Network Routing & Anonymity ---------- -->
+      <section class="opt" id="optMultiNetwork" aria-labelledby="optMultiNetworkTitle">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optMultiNetworkTitle">Multi-Network & Advanced Transports (13 Vectors)</h3>
+          <span class="switch-label">Multi-Route</span>
+        </header>
+        <p class="minor">
+          Toggle individual network transports, anonymity routes, and air-gapped vectors. All, some, or none can be active (default uses Direct HTTPS 80/443 TLS, which can also be disabled). Cache this page offline via Service Worker for full untethered multi-network operation.
+        </p>
+        <div style="display: flex; flex-direction: column; gap: 0.85rem; margin-top: 1rem;">
+          <label class="check"><input id="netDirect" type="checkbox"> <strong>Direct / Plain WWW (80/443 TLS)</strong> — <span class="minor">Strengths: Universal compatibility, speed. Weaknesses: Clearnet IP exposure, ISP logging.</span></label>
+          <label class="check"><input id="netTor" type="checkbox"> <strong>Tor Onion Service (<code>.onion</code>)</strong> — <span class="minor">Strengths: Strong anonymity, hidden location. Weaknesses: Higher latency.</span></label>
+          <label class="check"><input id="netI2p" type="checkbox"> <strong>I2P Eepsite (<code>.i2p</code>)</strong> — <span class="minor">Strengths: Garlic-routed P2P darknet. Weaknesses: Slower bootstrap.</span></label>
+          <label class="check"><input id="netEnsIpfs" type="checkbox"> <strong>Ethereum ENS / IPFS (<code>domail.eth</code>)</strong> — <span class="minor">Strengths: Censorship-resistant static publishing. Weaknesses: Pinning/gateway dependency.</span></label>
+          <label class="check"><input id="netRadicle" type="checkbox"> <strong>Radicle P2P Code Seed (<code>rad://</code>)</strong> — <span class="minor">Strengths: Sovereign P2P code collaboration. Weaknesses: Requires seed node.</span></label>
+          <label class="check"><input id="netYggdrasil" type="checkbox"> <strong>Yggdrasil Mesh (IPv6 Overlay)</strong> — <span class="minor">Strengths: End-to-end encrypted mesh without DNS. Weaknesses: Requires peering.</span></label>
+          <label class="check"><input id="netNostr" type="checkbox"> <strong>Nostr Relay Sync (<code>wss://</code>)</strong> — <span class="minor">Strengths: Decentralized E2EE DMs (NIP-04/17). Weaknesses: Relay availability.</span></label>
+          <label class="check"><input id="netReticulum" type="checkbox"> <strong>Reticulum / LXMF LoRa Mesh</strong> — <span class="minor">Strengths: Zero-infrastructure offline packet radio. Weaknesses: Low bandwidth.</span></label>
+          <label class="check"><input id="netWebRTC" type="checkbox"> <strong>WebRTC P2P Data Channels</strong> — <span class="minor">Strengths: Direct browser-to-browser streaming. Weaknesses: Requires out-of-band signaling.</span></label>
+          <label class="check"><input id="netBLE" type="checkbox"> <strong>Bluetooth Low Energy (BLE) Mesh</strong> — <span class="minor">Strengths: Air-gapped local proximity exchange. Weaknesses: Short range.</span></label>
+          <label class="check"><input id="netDNS" type="checkbox"> <strong>DNS TXT / CNAME Tunneling</strong> — <span class="minor">Strengths: Bypass restrictive firewalls. Weaknesses: Very low throughput.</span></label>
+          <label class="check"><input id="netSneakernet" type="checkbox"> <strong>USB / QR-Code Sneakernet</strong> — <span class="minor">Strengths: Absolute air-gap security. Weaknesses: Manual transport.</span></label>
+          <label class="check"><input id="netFederation" type="checkbox"> <strong>ActivityPub / Matrix / XMPP</strong> — <span class="minor">Strengths: Open federated network bridges. Weaknesses: Requires adapter gateway.</span></label>
+        </div>
+      </section>
+
+      <!-- ---------- VPN Gateway Integration ---------- -->
+      <section class="opt" id="optVpn" aria-labelledby="optVpnTitle" style="margin-top: 1.5rem;">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optVpnTitle">VPN Gateway & Clearnet Masking</h3>
+          <label class="switch">
+            <input id="setVpn" type="checkbox">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label" id="vpnState">Off</span>
+          </label>
+        </header>
+        <p class="minor">
+          Route public clearnet requests and web email gateways (e.g. Gmail/Outlook SMTP bridges) through a custom VPN or SOCKS5/HTTP proxy IP address.
+        </p>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>VPN / Proxy Endpoint (SOCKS5 / HTTP / WireGuard Gateway)</span>
+          <input id="setVpnEndpoint" type="text" autocomplete="off" spellcheck="false"
+                 placeholder="socks5://user:pass@proxy.provider:1080 or wg://config">
+        </div>
+        <div class="row" style="margin-top: 0.5rem;">
+          <label class="pill pill--file">Upload VPN Config<input id="setVpnFile" type="file" accept=".conf,.ovpn,.json" hidden></label>
+          <span id="vpnFileStatus" class="minor">No config loaded</span>
+        </div>
+        <div class="warn" role="note" style="margin-top: 0.75rem;">
+          <span class="warn-tag">Cybersecurity Warning</span>
+          <p>
+            Enabling a VPN proxy routes your public web/clearnet traffic through the configured gateway. 
+            However, <strong>the VPN provider sees your connection endpoint</strong> (though not message contents if E2EE/PGP is active). 
+            For maximum anonymity, prefer Tor, I2P, or air-gapped mesh vectors over commercial VPNs.
+          </p>
+        </div>
+      </section>
     </div>
 
     <div class="subpage" data-sub="data" hidden>
@@ -391,69 +543,6 @@
     </div>
   </section>
 </main>
-
-<!-- ============================ compose modal ============================ -->
-<div id="compose" class="modal" hidden>
-  <div class="modal-panel" role="dialog" aria-modal="true" aria-label="Compose">
-    <div class="addr">
-      <div class="addr-row"><label for="cTo">To</label>
-        <input id="cTo" type="text" autocomplete="off" spellcheck="false" placeholder="someone@domain, other@domain" data-pii="true">
-      </div>
-      <div class="addr-row" data-extra hidden><label for="cCc">Cc</label>
-        <input id="cCc" type="text" autocomplete="off" spellcheck="false" data-pii="true">
-      </div>
-      <div class="addr-row" data-extra hidden><label for="cBcc">Bcc</label>
-        <input id="cBcc" type="text" autocomplete="off" spellcheck="false" data-pii="true">
-      </div>
-      <div class="addr-row"><label for="cSubject">Subject</label>
-        <input id="cSubject" type="text" autocomplete="off" spellcheck="false">
-      </div>
-    </div>
-
-    <div class="format" role="toolbar" aria-label="Formatting">
-      <button data-fmt="bold" type="button" title="Bold"><b>B</b></button>
-      <button data-fmt="italic" type="button" title="Italic"><i>I</i></button>
-      <button data-fmt="underline" type="button" title="Underline"><u>U</u></button>
-      <button data-fmt="strike" type="button" title="Strikethrough">S</button>
-      <span class="sep"></span>
-      <select id="cSize" title="Font size, in real points" aria-label="Font size"></select>
-      <select id="cFont" title="Font" aria-label="Font">
-        <option value="inherit">inherit</option>
-        <option value="serif">serif</option>
-        <option value="monospace">mono</option>
-      </select>
-      <input id="cColor" type="color" value="#101012" title="Text colour" aria-label="Text colour">
-      <input id="cBg" type="color" value="#ffffff" title="Highlight" aria-label="Highlight colour">
-      <span class="sep"></span>
-      <button id="emojiBtn" type="button" title="Emoji" aria-haspopup="true" aria-expanded="false">☺</button>
-      <button id="cAttach" type="button" title="Attach">📎</button>
-      <input id="cFile" type="file" multiple hidden>
-    </div>
-
-    <div id="emoji" class="emoji" hidden role="dialog" aria-label="Emoji picker">
-      <div class="emoji-cats" role="tablist"></div>
-      <div class="emoji-skin" role="radiogroup" aria-label="Skin tone">
-        <button data-skin="default" type="button" aria-label="Default" class="on">◻</button>
-        <button data-skin="1F3FB" type="button" aria-label="Light">🏻</button>
-        <button data-skin="1F3FC" type="button" aria-label="Medium light">🏼</button>
-        <button data-skin="1F3FD" type="button" aria-label="Medium">🏽</button>
-        <button data-skin="1F3FE" type="button" aria-label="Medium dark">🏾</button>
-        <button data-skin="1F3FF" type="button" aria-label="Dark">🏿</button>
-      </div>
-      <div class="emoji-grid"></div>
-    </div>
-
-    <div id="editor" class="editor" contenteditable="true" role="textbox" aria-multiline="true" aria-label="Message body" spellcheck="true"></div>
-
-    <div class="compose-foot">
-      <span id="draftState" class="minor">draft autosaves</span>
-      <span class="spacer"></span>
-      <button id="cClose" class="pill" type="button">Close</button>
-      <button id="cDiscard" class="pill" type="button">Discard</button>
-      <button id="cSend" class="pill pill--go" type="button">Send</button>
-    </div>
-  </div>
-</div>
 
 <!-- ============================ onboarding: the one button ============================ -->
 <div id="onboard" class="modal modal--solo" hidden>

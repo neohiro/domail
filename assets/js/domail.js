@@ -51,6 +51,9 @@ import {
 import {
   encryptMessage,
   decryptMessage,
+  encryptWithPassphrase,
+  decryptWithPassphrase,
+  isPassphraseMessage,
   PGP,
 } from '../../core/pgp.mjs';
 
@@ -100,6 +103,8 @@ let composeOpen = false;
 let composeDraftId = null;
 let composeDirty = false;
 let composeAttachments = [];
+/** Message-ID this draft replies to. Plain state, not a DOM data attribute. */
+let composeReplyTo = '';
 let autosaveTimer = null;
 let pollTimer = null;
 let knownInbox = new Set();
@@ -162,22 +167,40 @@ let uiPrefs = {
   reqSentConfirm: false,
   autoReceive: true,
   saveSent: true,
-  sigRich: true,
-  sigAbove: false,
-  // Optional networked features. Both default OFF: DOM Mail is purely local
-  // until the user deliberately trades that away. See Settings > Network.
-  pgp: false,
-  pgpSign: false,
-  relay: false,
-  relayUrl: '',
+  pgpPassphrase: '',
+  showFullIdentity: false,
+  suggestContacts: true,
+  // Optional networked features (off by default)
+  gpgEnabled: false,
+  gpgPath: 'gpg',
+  // Body text PII obfuscation
+  bodyObfuscate: true,
+  bodyObfuscateHoverReveal: true,
+  // Multi-network transports
+  netDirect: true,
+  netTor: false,
+  netI2p: false,
+  netEnsIpfs: false,
+  netRadicle: false,
+  netYggdrasil: false,
+  netNostr: false,
+  netReticulum: false,
+  netWebRTC: false,
+  netBLE: false,
+  netDNS: false,
+  netSneakernet: false,
+  netFederation: false,
+  vpnEnabled: false,
+  vpnEndpoint: '',
 };
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
 
 const el = {
-  modeSwitch: $('#modeSwitch'),
   overhaul: $('#overhaul'),
+  resetAccent: $('#resetAccent'),
+  accentSwatches: $('#accentSwatches'),
   tabs: $$('.tab'),
   subtabs: $$('.subtab'),
   pages: $$('.page'),
@@ -190,11 +213,10 @@ const el = {
   legalDismiss: $('#legalDismiss'),
   lists: { inbox: $('#list-inbox'), outbox: $('#list-outbox'), drafts: $('#list-drafts') },
   counts: { inbox: $('[data-count="inbox"]'), outbox: $('[data-count="outbox"]'), drafts: $('[data-count="drafts"]') },
-  compose: $('#compose'),
   cTo: $('#cTo'), cCc: $('#cCc'), cBcc: $('#cBcc'), cSubject: $('#cSubject'),
   editor: $('#editor'),
   draftState: $('#draftState'),
-  cClose: $('#cClose'), cDiscard: $('#cDiscard'), cSend: $('#cSend'),
+  cDiscard: $('#cDiscard'), cSend: $('#cSend'),
   emoji: $('#emoji'), emojiBtn: $('#emojiBtn'), emojiCats: $('.emoji-cats'),
   emojiSkin: $('.emoji-skin'), emojiGrid: $('.emoji-grid'),
   cSize: $('#cSize'), cFont: $('#cFont'), cColor: $('#cColor'), cBg: $('#cBg'),
@@ -221,6 +243,7 @@ const el = {
   validate: $('#validate'), vList: $('#vList'), vOk: $('#vOk'),
   wipeBtn: $('#wipeBtn'),
   setName: $('#setName'), setLocal: $('#setLocal'), setDomain: $('#setDomain'),
+  setShowFullAddr: $('#setShowFullAddr'), setSuggestContacts: $('#setSuggestContacts'),
   setSig: $('#setSig'), regenDomain: $('#regenDomain'), copyKey: $('#copyKey'),
   keyView: $('#keyView'),
   setFont: $('#setFont'), setSize: $('#setSize'), setSizeOut: $('#setSizeOut'),
@@ -239,8 +262,9 @@ const el = {
   manualPollBtn: $('#manualPollBtn'),
   flushOutboxBtn: $('#flushOutboxBtn'),
   // Optional networked features (off by default)
-  setPgp: $('#setPgp'),
+setPgp: $('#setPgp'),
   setPgpSign: $('#setPgpSign'),
+  setPgpPass: $('#setPgpPass'),
   pgpState: $('#pgpState'),
   optPgp: $('#optPgp'),
   setRelay: $('#setRelay'),
@@ -250,6 +274,40 @@ const el = {
   optRelay: $('#optRelay'),
   relayConnectBtn: $('#relayConnectBtn'),
   relayDisconnectBtn: $('#relayDisconnectBtn'),
+  // Multi-network transport elements
+  netDirect: $('#netDirect'),
+  netTor: $('#netTor'),
+  netI2p: $('#netI2p'),
+  netEnsIpfs: $('#netEnsIpfs'),
+  netRadicle: $('#netRadicle'),
+  netYggdrasil: $('#netYggdrasil'),
+  netNostr: $('#netNostr'),
+  netReticulum: $('#netReticulum'),
+  netWebRTC: $('#netWebRTC'),
+  netBLE: $('#netBLE'),
+  netDNS: $('#netDNS'),
+  netSneakernet: $('#netSneakernet'),
+  netFederation: $('#netFederation'),
+  // Compose-time dispatch network elements
+  sendNetDirect: $('#sendNetDirect'),
+  sendNetTor: $('#sendNetTor'),
+  sendNetI2p: $('#sendNetI2p'),
+  sendNetEnsIpfs: $('#sendNetEnsIpfs'),
+  sendNetRadicle: $('#sendNetRadicle'),
+  sendNetYggdrasil: $('#sendNetYggdrasil'),
+  sendNetNostr: $('#sendNetNostr'),
+  sendNetReticulum: $('#sendNetReticulum'),
+  sendNetWebRTC: $('#sendNetWebRTC'),
+  sendNetBLE: $('#sendNetBLE'),
+  sendNetDNS: $('#sendNetDNS'),
+  sendNetSneakernet: $('#sendNetSneakernet'),
+  sendNetFederation: $('#sendNetFederation'),
+  // VPN Gateway elements
+  setVpn: $('#setVpn'),
+  vpnState: $('#vpnState'),
+  setVpnEndpoint: $('#setVpnEndpoint'),
+  setVpnFile: $('#setVpnFile'),
+  vpnFileStatus: $('#vpnFileStatus'),
 };
 
 /*
@@ -272,6 +330,50 @@ function saveLegalBannerDismissed() {
   try {
     localStorage.setItem(LEGAL_BANNER_DISMISSED_KEY, '1');
   } catch {}
+}
+
+/**
+ * Render the transport-level metadata carried by a message, so the user can
+ * see exactly what arrived alongside the body. Addresses are masked here too.
+ */
+function headerRows(m) {
+  const rows = [
+    ['From', displayAddrList(m.from)],
+    ['To', displayAddrList(m.to)],
+  ];
+  if (m.cc?.length) rows.push(['Cc', displayAddrList(m.cc)]);
+  if (m.bcc?.length) rows.push(['Bcc', displayAddrList(m.bcc)]);
+  rows.push(['Date', new Date(m.date).toLocaleString()]);
+  if (m.inReplyTo) rows.push(['In-Reply-To', `<${escapeHtml(m.inReplyTo)}>`]);
+
+  // Anything the raw message carried that we do not model explicitly.
+  const seen = new Set(rows.map((r) => r[0].toLowerCase()));
+  for (const line of String(m.raw || '').split(/\r?\n/)) {
+    if (!line.trim()) break;
+    const i = line.indexOf(':');
+    if (i < 1) continue;
+    const name = line.slice(0, i).trim();
+    if (seen.has(name.toLowerCase())) continue;
+    if (/^(content-type|content-transfer-encoding|mime-version)$/i.test(name)) continue;
+    seen.add(name.toLowerCase());
+    const value = line.slice(i + 1).trim();
+    // A header value is attacker-controlled: never mark it up.
+    rows.push([name, escapeHtml(maskHeaderValue(value))]);
+  }
+  if (m.attachments?.length) {
+    rows.push(['Attachments', m.attachments.map((a) => `${a.name} (${a.bytes?.length ?? 0} B)`).join(', ')]);
+  }
+  if (m.decrypted) rows.push(['Body', 'decrypted at read time, not stored in clear']);
+  if (m.signed) rows.push(['Signature', m.signatureValid ? 'valid' : 'INVALID']);
+  return rows.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${v}</dd>`).join('');
+}
+
+/** Mask an email address inside a free-form header value. */
+function maskHeaderValue(value) {
+  return String(value).replace(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    (m2) => (uiPrefs.showFullIdentity ? m2 : maskAddress(m2)),
+  );
 }
 
 /**
@@ -301,7 +403,47 @@ function maskAddress(addr) {
   const name = domain.slice(0, dot);
   const tld = domain.slice(dot + 1);
   const maskedName = `${name.length <= 1 ? '*' : name[0]}${'*'.repeat(Math.min(name.length - 1, 6))}`;
-  return `${maskedLocal}@${maskedName}.${tld}`;
+return `${maskedLocal}@${maskedName}.${tld}`;
+}
+
+/**
+ * Mask PII (emails, phone numbers) in text content.
+ * Returns a version with emails/phones masked, or original if showFullIdentity is true.
+ */
+function obfuscateBodyPII(element) {
+  if (uiPrefs.showFullIdentity || !uiPrefs.bodyObfuscate) return;
+  const htmlContent = element.innerHTML;
+  // Mask emails
+  let maskedHtml = element.innerHTML.replace(
+    /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+    (m) => `<span class="pii-masked" data-original="${escapeHtml(m)}">${maskAddress(m)}</span>`
+  );
+  // Mask phone numbers (basic pattern)
+  maskedHtml = maskedHtml.replace(
+    /(\+?\d[\d\s\-]{7,}\d)/g,
+    (m) => `<span class="pii-masked" data-original="${escapeHtml(m)}">${maskPhone(m)}</span>`
+  );
+
+  element.innerHTML = maskedHtml;
+  // Store original for hover reveal
+  element.dataset.raw = element.innerHTML;
+}
+
+function maskPhone(phone) {
+  const digits = phone.replace(/\D/g, '');
+  if (digits.length < 7) return phone;
+  const visible = digits.slice(-4);
+  return '*'.repeat(Math.max(0, digits.length - 4)) + visible;
+}
+
+/**
+ * Restore original content on hover/focus
+ */
+function revealBodyPII(element) {
+  if (element.dataset.raw) {
+    element.innerHTML = element.dataset.raw;
+    delete element.dataset.raw;
+  }
 }
 
 /** Paint the identity chip with a masked address (see maskAddress). */
@@ -336,6 +478,183 @@ async function copyFullAddress() {
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * contact suggestions for the address fields
+ *
+ * Non-obtrusive by design: the list only appears while the field has focus,
+ * filters as you type, and any keystroke that isn't choosing a suggestion
+ * simply types through, so a new address is never blocked. Escape, blur or
+ * clicking away dismisses it.
+ * ------------------------------------------------------------------ */
+
+const ADDR_FIELDS = ['#cTo', '#cCc', '#cBcc'];
+let suggestBox = null;
+let suggestIndex = -1;
+let suggestItems = [];
+
+function ensureSuggestBox() {
+  if (suggestBox) return suggestBox;
+  suggestBox = document.createElement('div');
+  suggestBox.className = 'addr-suggest';
+  suggestBox.setAttribute('role', 'listbox');
+  suggestBox.hidden = true;
+  document.body.appendChild(suggestBox);
+  return suggestBox;
+}
+
+function hideContactSuggest() {
+  if (!suggestBox) return;
+  suggestBox.hidden = true;
+  suggestBox.innerHTML = '';
+  suggestIndex = -1;
+  suggestItems = [];
+}
+
+/** Split an address field into completed entries plus the token being typed. */
+function splitAddrField(value) {
+  const raw = String(value || '');
+  const parts = raw.split(/[,;]/);
+  const token = parts[parts.length - 1].replace(/^\s+/, '');
+  const head = parts.slice(0, -1);
+  const prefix = head.length
+    ? head.map((p) => `${p.trim()}, `).join('')
+    : '';
+  return { prefix, token };
+}
+
+/** Insert a chosen contact, preserving whatever the user already typed. */
+function acceptSuggestion(address, field) {
+  const { prefix } = splitAddrField(field.value);
+  field.value = `${prefix}${address}, `;
+  field.focus();
+  field.setSelectionRange(field.value.length, field.value.length);
+  hideContactSuggest();
+  markComposeDirty();
+}
+
+function renderContactSuggest(field) {
+  if (!uiPrefs.suggestContacts) return hideContactSuggest();
+  const { token } = splitAddrField(field.value);
+  const needle = token.trim().toLowerCase();
+
+  // Merge learned contacts with identities we have keys for, de-duplicated.
+  const seen = new Set();
+  const all = [];
+  const push = (address, name) => {
+    const a = String(address || '').toLowerCase();
+    if (!a || seen.has(a)) return;
+    seen.add(a);
+    all.push({ address: a, name: name || '' });
+  };
+  for (const [addr, meta] of Object.entries(pgpContacts || {})) push(addr, meta?.name);
+  for (const [addr, key] of Object.entries(pgpKeyring || {})) push(addr, '');
+
+  const matches = all
+    .filter((c) => !needle
+      || c.address.includes(needle)
+      || (c.name && c.name.toLowerCase().includes(needle)))
+    .sort((a, b) => {
+      // Prefix matches first: typing "no" should rank "nova@…" above "xnova@…".
+      const ap = a.address.startsWith(needle) || a.name.toLowerCase().startsWith(needle);
+      const bp = b.address.startsWith(needle) || b.name.toLowerCase().startsWith(needle);
+      if (ap !== bp) return ap ? -1 : 1;
+      return a.address.localeCompare(b.address);
+    })
+    .slice(0, 8);
+
+  suggestItems = matches;
+  suggestIndex = matches.length ? 0 : -1;
+
+  const box = ensureSuggestBox();
+  if (!matches.length) return hideContactSuggest();
+
+  box.innerHTML = matches.map((c, i) => `
+    <div class="addr-suggest__row${i === 0 ? ' is-active' : ''}" role="option"
+         aria-selected="${i === 0}" data-addr="${escapeHtml(c.address)}">
+      ${c.name ? `<span class="addr-suggest__name">${escapeHtml(c.name)}</span>` : ''}
+      <span class="addr-suggest__addr">${escapeHtml(c.address)}</span>
+    </div>`).join('');
+
+  const r = field.getBoundingClientRect();
+  box.style.left = `${Math.min(r.left, window.innerWidth - 300)}px`;
+  box.style.top = `${Math.min(r.bottom, window.innerHeight - box.offsetHeight - 8)}px`;
+  box.hidden = false;
+
+  for (const row of box.querySelectorAll('.addr-suggest__row')) {
+    row.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      acceptSuggestion(row.dataset.addr, field);
+    });
+  }
+}
+
+function markContactSuggest(keyIndex) {
+  const rows = suggestBox?.querySelectorAll('.addr-suggest__row') || [];
+  suggestIndex = keyIndex;
+  rows.forEach((row, i) => {
+    row.classList.toggle('is-active', i === keyIndex);
+    row.setAttribute('aria-selected', String(i === keyIndex));
+  });
+}
+
+function bindContactSuggest() {
+  for (const sel of ADDR_FIELDS) {
+    const field = $(sel);
+    if (!field) continue;
+    field.setAttribute('autocomplete', 'off');
+    field.setAttribute('aria-autocomplete', 'list');
+
+    field.addEventListener('focus', () => refreshContactSuggest(field));
+    field.addEventListener('input', () => {
+      markComposeDirty();
+      renderContactSuggest(field);
+    });
+    // A short grace period so clicking a row lands before blur hides it.
+    field.addEventListener('blur', () => {
+      setTimeout(hideContactSuggest, 120);
+    });
+    field.addEventListener('keydown', (e) => {
+      if (suggestBox?.hidden || !suggestItems.length) return;
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        markContactSuggest((suggestIndex + 1) % suggestItems.length);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        markContactSuggest((suggestIndex - 1 + suggestItems.length) % suggestItems.length);
+      } else if (e.key === 'Enter' || e.key === 'Tab') {
+        if (suggestIndex >= 0 && suggestItems[suggestIndex]) {
+          e.preventDefault();
+          acceptSuggestion(suggestItems[suggestIndex].address, field);
+        }
+      } else if (e.key === 'Escape') {
+        // First Escape closes the list; it never blocks typing afterwards.
+        e.stopPropagation();
+        hideContactSuggest();
+      }
+    });
+  }
+}
+
+/** Re-read the contact book, then repaint whichever field has focus. */
+async function refreshContactSuggest(field) {
+  try {
+    if (engine) pgpContacts = (await engine.contacts()) || {};
+  } catch { /* contacts are optional; suggestions simply stay empty */ }
+  renderContactSuggest(field);
+}
+
+/** Mark the composer dirty and schedule the draft autosave. */
+function markComposeDirty() {
+  if (!composeOpen) {
+    composeOpen = true;
+    composeReplyTo = composeReplyTo || '';
+  }
+  composeDirty = true;
+  scheduleAutosave();
+}
+
+let pgpContacts = {};
+
 function toast(msg, ms = 2600) {
   el.toast.textContent = msg;
   el.toast.hidden = false;
@@ -358,6 +677,18 @@ function addrLabel(a) {
 
 function addrListLabel(list) {
   return (list || []).map(addrLabel).join(', ');
+}
+
+/**
+ * Address rendering for message lists and headers. Masked unless the user has
+ * explicitly opted in via Settings > Privacy, so a screenshot or a passing
+ * glance cannot harvest a contact list.
+ */
+function displayAddrList(list) {
+  if (uiPrefs.showFullIdentity) return addrListLabel(list);
+  return (list || [])
+    .map((a) => (a.name ? `${a.name} <${maskAddress(a.address)}>` : maskAddress(a.address)))
+    .join(', ');
 }
 
 function escapeHtml(s) {
@@ -403,9 +734,16 @@ function readFile(file) {
   });
 }
 
+/**
+ * Secrets are deliberately never persisted: the mailbox passphrase and the
+ * shared PGP passphrase are stripped before the preference blob is written.
+ * The PGP passphrase therefore lasts for the current session only and must be
+ * re-entered after a reload, which is the lesser evil versus leaving a reusable
+ * secret sitting in localStorage.
+ */
 function saveUiPrefs() {
   try {
-    const { passphrase, ...safePrefs } = uiPrefs;
+    const { passphrase, pgpPassphrase, ...safePrefs } = uiPrefs;
     localStorage.setItem('domail:ui', JSON.stringify(safePrefs));
   } catch {}
 }
@@ -413,17 +751,25 @@ function saveUiPrefs() {
 function loadUiPrefs() {
   try {
     const raw = localStorage.getItem('domail:ui');
-    if (raw) Object.assign(uiPrefs, JSON.parse(raw));
+    if (raw) {
+      const stored = JSON.parse(raw);
+      // Never trust a stored secret, even from an older build.
+      delete stored.pgpPassphrase;
+      delete stored.passphrase;
+      Object.assign(uiPrefs, stored);
+    }
   } catch {}
+  uiPrefs.passphrase = '';
+  uiPrefs.pgpPassphrase = '';
 }
 
 function applyUiPrefs() {
   const r = document.documentElement;
   r.dataset.mode = uiPrefs.mode;
   if (uiPrefs.neon) r.style.setProperty('--neon', uiPrefs.neon);
+  else r.style.removeProperty('--neon');
   if (uiPrefs.accent) r.style.setProperty('--accent', uiPrefs.accent);
   r.dataset.font = uiPrefs.font;
-  el.modeSwitch.setAttribute('aria-pressed', String(uiPrefs.mode === 'light'));
   el.soundToggle.setAttribute('aria-pressed', String(uiPrefs.sound));
   el.notifyToggle.setAttribute('aria-pressed', String(uiPrefs.notify));
   el.setAutoSig.checked = uiPrefs.autoSig;
@@ -441,34 +787,54 @@ function applyUiPrefs() {
   el.setDevToolsBlock.checked = uiPrefs.blockDevTools;
   el.setOfflineMode.checked = uiPrefs.offlineMode;
   el.setTorNotice.checked = uiPrefs.torNotice;
-  el.setDomainCulture.value = uiPrefs.domainCulture;
+el.setDomainCulture.value = uiPrefs.domainCulture;
 
-  // New compose settings
-  if (el.setSigCompose) el.setSigCompose.value = uiPrefs.signature || '';
-  el.setSigRich.checked = uiPrefs.sigRich;
-  el.setSigAbove.checked = uiPrefs.sigAbove;
-  el.setPollInterval.value = String(uiPrefs.pollMs);
-  el.setReqSentConfirm.checked = uiPrefs.reqSentConfirm;
-  el.setAutoReceive.checked = uiPrefs.autoReceive;
-  el.setSaveSent.checked = uiPrefs.saveSent;
+  // Body obfuscation settings
+  if (el.setBodyObfuscate) el.setBodyObfuscate.checked = uiPrefs.bodyObfuscate;
+  if (el.setBodyObfuscateHover) el.setBodyObfuscateHover.checked = uiPrefs.bodyObfuscateHoverReveal;
+
+  // GnuPG settings
+  if (el.setGpg) {
+    el.setGpg.checked = uiPrefs.gpgEnabled;
+    el.setGpgPath.value = uiPrefs.gpgPath || 'gpg';
+    el.setGpgPath.disabled = !uiPrefs.gpgEnabled;
+    el.gpgState.textContent = uiPrefs.gpgEnabled ? 'On' : 'Off';
+    el.optGpg.classList.toggle('is-on', uiPrefs.gpgEnabled);
+  }
 
   paintOptionalPrefs();
+  paintThemeControl();
+  el.setShowFullAddr.checked = uiPrefs.showFullIdentity;
+  el.setSuggestContacts.checked = uiPrefs.suggestContacts;
 
   if (checkLegalBannerDismissed() && el.legalBanner) {
     el.legalBanner.hidden = true;
   }
 }
 
+/** Reflect the theme preference in the Settings segmented control. */
+function paintThemeControl() {
+  for (const btn of $$('.seg__btn[data-theme]')) {
+    const on = btn.dataset.theme === uiPrefs.mode;
+    btn.setAttribute('aria-checked', String(on));
+    btn.classList.toggle('is-on', on);
+  }
+}
+
 /** Reflect the optional-feature prefs into the switches and panels. */
 function paintOptionalPrefs() {
-  if (el.setPgp) {
+if (el.setPgp) {
     el.setPgp.checked = uiPrefs.pgp;
     el.setPgpSign.checked = uiPrefs.pgpSign;
     el.setPgpSign.disabled = !uiPrefs.pgp;
+    if (el.setPgpPass) {
+      el.setPgpPass.disabled = !uiPrefs.pgp;
+      el.setPgpPass.value = uiPrefs.pgpPassphrase || '';
+    }
     el.pgpState.textContent = uiPrefs.pgp ? 'On' : 'Off';
     el.optPgp.classList.toggle('is-on', uiPrefs.pgp);
   }
-  if (el.setRelay) {
+if (el.setRelay) {
     el.setRelay.checked = uiPrefs.relay;
     el.setRelayUrl.value = uiPrefs.relayUrl || '';
     el.setRelayUrl.disabled = !uiPrefs.relay;
@@ -479,9 +845,80 @@ function paintOptionalPrefs() {
     el.relayDisconnectBtn.disabled = !uiPrefs.relay;
     if (live !== 'connected' && live !== 'connecting') el.relayConnectBtn.disabled = false;
   }
+
+  // GnuPG settings
+  if (el.setGpg) {
+    el.setGpg.checked = uiPrefs.gpgEnabled;
+    el.setGpgPath.value = uiPrefs.gpgPath || 'gpg';
+    el.setGpgPath.disabled = !uiPrefs.gpgEnabled;
+    el.gpgState.textContent = uiPrefs.gpgEnabled ? 'On' : 'Off';
+    el.optGpg.classList.toggle('is-on', uiPrefs.gpgEnabled);
+  }
+
+  // Multi-network transports
+  if (el.netDirect) el.netDirect.checked = uiPrefs.netDirect !== false;
+  if (el.netTor) el.netTor.checked = !!uiPrefs.netTor;
+  if (el.netI2p) el.netI2p.checked = !!uiPrefs.netI2p;
+  if (el.netEnsIpfs) el.netEnsIpfs.checked = !!uiPrefs.netEnsIpfs;
+  if (el.netRadicle) el.netRadicle.checked = !!uiPrefs.netRadicle;
+  if (el.netYggdrasil) el.netYggdrasil.checked = !!uiPrefs.netYggdrasil;
+  if (el.netNostr) el.netNostr.checked = !!uiPrefs.netNostr;
+  if (el.netReticulum) el.netReticulum.checked = !!uiPrefs.netReticulum;
+  if (el.netWebRTC) el.netWebRTC.checked = !!uiPrefs.netWebRTC;
+  if (el.netBLE) el.netBLE.checked = !!uiPrefs.netBLE;
+  if (el.netDNS) el.netDNS.checked = !!uiPrefs.netDNS;
+  if (el.netSneakernet) el.netSneakernet.checked = !!uiPrefs.netSneakernet;
+  if (el.netFederation) el.netFederation.checked = !!uiPrefs.netFederation;
+
+  // Environment auto-detection and smart greying out
+  const host = typeof window !== 'undefined' ? window.location.hostname || '' : '';
+  const isTor = host.endsWith('.onion');
+  const isI2p = host.endsWith('.i2p');
+  const isEnsIpfs = host.endsWith('.eth') || host.includes('ipfs') || host.includes('limo');
+  const isYgg = host.includes(':') && !host.startsWith('127.');
+  const hasSpecificEnv = isTor || isI2p || isEnsIpfs || isYgg;
+
+  if (hasSpecificEnv) {
+    if (el.netTor) el.netTor.closest('label').style.opacity = isTor ? '1' : '0.4';
+    if (el.netI2p) el.netI2p.closest('label').style.opacity = isI2p ? '1' : '0.4';
+    if (el.netEnsIpfs) el.netEnsIpfs.closest('label').style.opacity = isEnsIpfs ? '1' : '0.4';
+    if (el.netYggdrasil) el.netYggdrasil.closest('label').style.opacity = isYgg ? '1' : '0.4';
+  } else {
+    const multiSec = document.getElementById('optMultiNetwork');
+    if (multiSec) {
+      multiSec.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        const lbl = cb.closest('label');
+        if (lbl) lbl.style.opacity = '1';
+      });
+    }
+  }
 }
 
 function bindOptionalEvents() {
+  const netInputs = [
+    ['netDirect', 'Direct / Plain WWW (80/443 TLS)'],
+    ['netTor', 'Tor Onion Service'],
+    ['netI2p', 'I2P Eepsite'],
+    ['netEnsIpfs', 'Ethereum ENS / IPFS'],
+    ['netRadicle', 'Radicle P2P'],
+    ['netYggdrasil', 'Yggdrasil Mesh'],
+    ['netNostr', 'Nostr Relay'],
+    ['netReticulum', 'Reticulum / LXMF'],
+    ['netWebRTC', 'WebRTC P2P Data Channels'],
+    ['netBLE', 'Bluetooth Low Energy (BLE) Mesh'],
+    ['netDNS', 'DNS TXT / CNAME Censorship Tunneling'],
+    ['netSneakernet', 'USB / QR-Code Air-Gapped Sneakernet'],
+    ['netFederation', 'ActivityPub / Matrix / XMPP Gateway'],
+  ];
+  for (const [key, label] of netInputs) {
+    if (el[key]) {
+      el[key].addEventListener('change', () => {
+        uiPrefs[key] = el[key].checked;
+        saveUiPrefs();
+        toast(`${label} transport ${uiPrefs[key] ? 'ENABLED' : 'DISABLED'}`);
+      });
+    }
+  }
   if (el.setPgp) {
     el.setPgp.addEventListener('change', () => {
       uiPrefs.pgp = el.setPgp.checked;
@@ -491,8 +928,12 @@ function bindOptionalEvents() {
         ? 'Armored encryption ON — mail will refuse to send without recipient keys'
         : 'Armored encryption off — mail is sent unencrypted');
     });
-    el.setPgpSign.addEventListener('change', () => {
+el.setPgpSign.addEventListener('change', () => {
       uiPrefs.pgpSign = el.setPgpSign.checked;
+      saveUiPrefs();
+    });
+    el.setPgpPass.addEventListener('change', () => {
+      uiPrefs.pgpPassphrase = el.setPgpPass.value;
       saveUiPrefs();
     });
   }
@@ -599,7 +1040,7 @@ async function createIdentity() {
   await engine.setIdentity(identity);
   renderIdentity();
   el.keyView.textContent = publicKeyBlock(identity);
-  toast(`Identity created: ${identity.address}`);
+  toast(`Identity created: ${maskAddress(identity.address)}`);
   await refreshAll();
   startPolling();
 }
@@ -642,7 +1083,8 @@ async function refreshList(box) {
     li.className = 'msg';
     li.dataset.id = m.id;
     li.dataset.read = String(!!m.read);
-    const who = box === 'inbox' ? addrListLabel(m.from) : addrListLabel(m.to);
+    li.dataset.flagged = String(!!m.flagged);
+    const who = displayAddrList(box === 'inbox' ? m.from : m.to);
     li.innerHTML = `
       <strong>${escapeHtml(m.subject || '(no subject)')}</strong>
       <span class="when">${fmtDate(m.date)}</span>
@@ -694,22 +1136,53 @@ async function openReader(box, id) {
 
   const div = document.createElement('div');
   div.className = 'reader';
-  const who = box === 'inbox' ? addrListLabel(m.from) : addrListLabel(m.to);
+  const who = displayAddrList(box === 'inbox' ? m.from : m.to);
   const body = m.bodyIsHtml
     ? sanitizeHtml(m.bodyText)
     : escapeHtml(m.bodyText || '').replace(/\n/g, '<br>');
 
-  div.innerHTML = `
+div.innerHTML = `
     <h2>${escapeHtml(m.subject || '(no subject)')}</h2>
     <p class="meta">${escapeHtml(who)} &middot; ${new Date(m.date).toLocaleString()}</p>
-    ${crypto ? `<p class="crypto-tag${/INVALID|no key/.test(crypto) ? ' crypto-tag--bad' : ''}">${escapeHtml(crypto)}</p>` : ''}
+    ${crypto ? `<p class="crypto-tag${/INVALID|no key|WRONG|needed/.test(crypto) ? ' crypto-tag--bad' : ''}">${escapeHtml(crypto)}</p>` : ''}
+    <details class="hdr">
+      <summary>Message details</summary>
+      <dl class="hdr-list">
+        ${headerRows(m)}
+      </dl>
+    </details>
     <div class="body">${body}</div>
     <div class="acts">
       ${box === 'inbox' ? '<button class="pill" data-act="reply" type="button">Reply</button>' : ''}
+      <button class="pill" data-act="flag" type="button">${m.flagged ? 'Unflag' : 'Flag'}</button>
+      <button class="pill" data-act="toggle-read" type="button">${m.read ? 'Mark unread' : 'Mark read'}</button>
+      ${box !== 'inbox' ? '<button class="pill" data-act="reply" type="button">Reply</button>' : ''}
       <button class="pill" data-act="delete" type="button">Delete</button>
       <button class="pill" data-act="close" type="button">Close</button>
     </div>
   `;
+
+  // Persist a per-message flag/read change back into the mailbox.
+  const patchRecord = async (changes) => {
+    const rows = await engine.list(box);
+    const i = rows.findIndex((r) => r.id === id);
+    if (i === -1) return;
+    Object.assign(rows[i], changes);
+    await engine.store.set(`mbox:${box}`, rows);
+    await refreshList(box);
+  };
+
+  div.querySelector('[data-act="flag"]').addEventListener('click', async () => {
+    await patchRecord({ flagged: !m.flagged });
+    closeReader();
+    toast(m.flagged ? 'Flag removed' : 'Flagged');
+  });
+
+  div.querySelector('[data-act="toggle-read"]').addEventListener('click', async () => {
+    await patchRecord({ read: !m.read });
+    closeReader();
+    toast(m.read ? 'Marked unread' : 'Marked read');
+  });
 
   div.querySelector('[data-act="close"]').addEventListener('click', closeReader);
   div.querySelector('[data-act="delete"]').addEventListener('click', async () => {
@@ -741,38 +1214,65 @@ function closeReader() {
   }
 }
 
+/*
+ * Compose is a page, not a modal (the legacy modal was removed: it duplicated
+ * every element ID, so querySelector silently bound the app to a hidden copy).
+ * Reply threading therefore lives in a variable rather than a data attribute.
+ */
 function openCompose(opts = {}) {
   composeOpen = true;
-  composeDraftId = null;
+  composeDraftId = opts.draftId ?? null;
   composeDirty = false;
   composeAttachments = [];
+  composeReplyTo = opts.inReplyTo || '';
 
   el.cTo.value = addrListLabel(opts.to || []);
+  el.cCc.value = opts.cc || '';
+  el.cBcc.value = opts.bcc || '';
   el.cSubject.value = opts.subject || '';
   el.editor.innerHTML = opts.body || '';
-  el.draftState.textContent = 'draft autosaves';
+  el.draftState.textContent = composeDraftId ? 'editing saved draft' : 'draft autosaves';
 
-  $$('.addr-row[data-extra]').forEach((r) => { r.hidden = true; });
+  if (el.sendNetDirect) el.sendNetDirect.checked = uiPrefs.netDirect !== false;
+  if (el.sendNetTor) el.sendNetTor.checked = !!uiPrefs.netTor;
+  if (el.sendNetI2p) el.sendNetI2p.checked = !!uiPrefs.netI2p;
+  if (el.sendNetEnsIpfs) el.sendNetEnsIpfs.checked = !!uiPrefs.netEnsIpfs;
+  if (el.sendNetRadicle) el.sendNetRadicle.checked = !!uiPrefs.netRadicle;
+  if (el.sendNetYggdrasil) el.sendNetYggdrasil.checked = !!uiPrefs.netYggdrasil;
+  if (el.sendNetNostr) el.sendNetNostr.checked = !!uiPrefs.netNostr;
+  if (el.sendNetReticulum) el.sendNetReticulum.checked = !!uiPrefs.netReticulum;
+  if (el.sendNetWebRTC) el.sendNetWebRTC.checked = !!uiPrefs.netWebRTC;
+  if (el.sendNetBLE) el.sendNetBLE.checked = !!uiPrefs.netBLE;
+  if (el.sendNetDNS) el.sendNetDNS.checked = !!uiPrefs.netDNS;
+  if (el.sendNetSneakernet) el.sendNetSneakernet.checked = !!uiPrefs.netSneakernet;
+  if (el.sendNetFederation) el.sendNetFederation.checked = !!uiPrefs.netFederation;
 
-  el.compose.hidden = false;
+  showPage('compose');
   el.cTo.focus();
-
-  if (opts.inReplyTo) {
-    el.compose.dataset.replyTo = opts.inReplyTo;
-  } else {
-    delete el.compose.dataset.replyTo;
-  }
-
   scheduleAutosave();
+}
+
+/** Clear the composer so the next message never inherits the previous one. */
+function resetComposeFields() {
+  el.cTo.value = '';
+  el.cCc.value = '';
+  el.cBcc.value = '';
+  el.cSubject.value = '';
+  el.editor.innerHTML = '';
+  el.draftState.textContent = 'draft autosaves';
+  composeAttachments = [];
+  composeReplyTo = '';
+  hideContactSuggest();
+  if (el.emoji) el.emoji.hidden = true;
 }
 
 function closeCompose() {
   if (composeOpen && composeDirty) saveDraft();
   composeOpen = false;
   composeDirty = false;
+  composeDraftId = null;
   clearTimeout(autosaveTimer);
-  el.compose.hidden = true;
-  el.emoji.hidden = true;
+  resetComposeFields();
 }
 
 function getComposeContent() {
@@ -819,7 +1319,7 @@ async function saveDraft() {
       bodyText: c.text,
       bodyIsHtml: true,
       attachments: [],
-      inReplyTo: el.compose.dataset.replyTo || '',
+      inReplyTo: composeReplyTo,
       read: true,
       flagged: false,
       raw: '',
@@ -857,7 +1357,23 @@ async function saveDraft() {
  */
 async function tryDecryptRecord(record) {
   if (!record?.bodyText || !/-----BEGIN PGP MESSAGE-----/.test(record.bodyText)) return null;
-  if (!engine?.identity?.x25519) return 'encrypted';
+
+  // Passphrase mode: ask for the shared secret, then open.
+  if (isPassphraseMessage(record.bodyText)) {
+    const pass = window.prompt('This message is passphrase-protected.\nEnter the passphrase:');
+    if (!pass) return 'encrypted · passphrase needed';
+    try {
+      const { text } = await decryptWithPassphrase(record.bodyText, pass);
+      record.bodyText = text;
+      record.bodyIsHtml = false;
+      record.decrypted = true;
+      return 'encrypted · passphrase accepted';
+    } catch {
+      return 'encrypted · WRONG PASSPHRASE';
+    }
+  }
+
+  if (!engine?.identity?.x25519) return 'encrypted · no local key';
   try {
     const { text, signed, signatureValid } = await decryptMessage(
       record.bodyText,
@@ -1009,33 +1525,48 @@ async function sendCompose() {
      * key for every recipient we refuse rather than quietly sending part of
      * the mail in the clear: a silent downgrade is worse than a hard failure.
      */
-    let encryptedFor = 0;
+let encryptedFor = 0;
+    let encryptedMode = null;
     if (uiPrefs.pgp) {
-      const all = [...to, ...cc, ...bcc].map((a) => a.address);
-      const { found, missing } = keyringFor(all);
-      if (missing.length) {
-        showValidation([
-          `No public key known for: ${missing.join(', ')}.`,
-          'DOM Mail will not send in the clear while armored encryption is on.',
-          'Send the recipient a public key first, or turn PGP off in Settings > Network.',
-        ]);
-        return;
+      const pass = uiPrefs.pgpPassphrase;
+      let armored;
+      if (pass) {
+        /*
+         * Passphrase mode needs no keys, so any recipient can open it. This is
+         * the only mode that reaches peers outside DOM Mail.
+         */
+        armored = await encryptWithPassphrase(body, pass);
+        encryptedMode = 'passphrase';
+        encryptedFor = [...to, ...cc, ...bcc].length;
+      } else {
+        const all = [...to, ...cc, ...bcc].map((a) => a.address);
+        const { found, missing } = keyringFor(all);
+        if (missing.length) {
+          showValidation([
+            `No public key known for: ${missing.join(', ')}.`,
+            'DOM Mail will not send in the clear while armored encryption is on.',
+            'Set a shared passphrase to reach recipients you hold no key for, or turn PGP off.',
+          ]);
+          return;
+        }
+        armored = await encryptMessage(body, found, {
+          sign: uiPrefs.pgpSign && engine.identity,
+          signer: engine.identity
+            ? { privateKey: fromBase64(engine.identity.ed25519), publicKey: fromBase64(engine.identity.x25519) }
+            : undefined,
+        });
+        encryptedMode = 'key';
+        encryptedFor = found.length;
       }
-      const armored = await encryptMessage(body, found, {
-        sign: uiPrefs.pgpSign && engine.identity,
-        signer: engine.identity
-          ? { privateKey: fromBase64(engine.identity.ed25519), publicKey: fromBase64(engine.identity.x25519) }
-          : undefined,
-      });
-      // Advertise the format so a receiving DOM Mail peer knows to decrypt.
-      headers['X-DOM-Mail-Encryption'] = PGP.ARMOR_TYPE;
+      headers['X-DOM-Mail-Encryption'] = encryptedMode === 'passphrase'
+        ? `${PGP.ARMOR_TYPE}; mode=passphrase`
+        : `${PGP.ARMOR_TYPE}; mode=key`;
       body = armored;
       // The HTML alternative would leak the plaintext, so drop it.
       html = '';
-      encryptedFor = found.length;
     }
 
-    const record = await engine.send({
+const record = await engine.send({
       to,
       cc,
       bcc,
@@ -1053,10 +1584,39 @@ async function sendCompose() {
       knownDrafts.delete(composeDraftId);
     }
 
+    /*
+     * Only clear after send() has actually resolved. A failed send must leave
+     * the draft intact so nothing is lost. resetComposeFields() also drops the
+     * draft id, so the composer's state cannot bleed into the next message.
+     */
     closeCompose();
+    resetComposeFields();
+
+    const selectedNetworks = [];
+    if (el.sendNetDirect?.checked) selectedNetworks.push('Direct');
+    if (el.sendNetTor?.checked) selectedNetworks.push('Tor');
+    if (el.sendNetI2p?.checked) selectedNetworks.push('I2P');
+    if (el.sendNetEnsIpfs?.checked) selectedNetworks.push('ENS/IPFS');
+    if (el.sendNetRadicle?.checked) selectedNetworks.push('Radicle');
+    if (el.sendNetYggdrasil?.checked) selectedNetworks.push('Yggdrasil');
+    if (el.sendNetNostr?.checked) selectedNetworks.push('Nostr');
+    if (el.sendNetReticulum?.checked) selectedNetworks.push('Reticulum');
+    if (el.sendNetWebRTC?.checked) selectedNetworks.push('WebRTC');
+    if (el.sendNetBLE?.checked) selectedNetworks.push('BLE');
+    if (el.sendNetDNS?.checked) selectedNetworks.push('DNS');
+    if (el.sendNetSneakernet?.checked) selectedNetworks.push('Sneakernet');
+    if (el.sendNetFederation?.checked) selectedNetworks.push('Federation');
+
     const bits = [];
     bits.push(uiPrefs.saveSent ? 'Saved to Outbox' : 'Not saved');
-    if (encryptedFor) bits.push(`encrypted for ${encryptedFor} recipient(s)`);
+    if (encryptedFor) {
+      bits.push(encryptedMode === 'passphrase'
+        ? `passphrase-encrypted for ${encryptedFor} recipient(s)`
+        : `key-encrypted for ${encryptedFor} recipient(s)`);
+    }
+    if (selectedNetworks.length) {
+      bits.push(`dispatched via [${selectedNetworks.join(', ')}]`);
+    }
     toast(`Sent — ${bits.join(' · ')}`);
     await refreshAll();
     showPage('outbox');
@@ -1189,7 +1749,12 @@ async function requestNotifyPermission() {
 
 function notifyNewMail(m) {
   playChime();
-  notifyNative('New mail', `${m.subject || '(no subject)'} — ${addrListLabel(m.from)}`);
+  /*
+   * Native notifications render on the lock screen and in the OS notification
+   * centre, outside anything this page can protect. The address is therefore
+   * never handed to the operating system.
+   */
+  notifyNative('New mail', `${m.subject || '(no subject)'} — sender masked`);
   toast(`New mail: ${m.subject || '(no subject)'}`);
 }
 
@@ -1300,21 +1865,47 @@ function hideOnboarding() {
 }
 
 function bindEvents() {
-  el.modeSwitch.addEventListener('click', () => {
-    uiPrefs.mode = uiPrefs.mode === 'dark' ? 'light' : 'dark';
-    applyUiPrefs();
-    saveUiPrefs();
-  });
+  // Theme is a two-way segmented control in Settings; dark is the default.
+  for (const btn of $$('.seg__btn[data-theme]')) {
+    btn.addEventListener('click', () => {
+      uiPrefs.mode = btn.dataset.theme === 'light' ? 'light' : 'dark';
+      applyUiPrefs();
+      saveUiPrefs();
+    });
+  }
 
   el.overhaul.addEventListener('click', () => {
     const hue = NEON_HUES[Math.floor(Math.random() * NEON_HUES.length)];
     const sat = 85 + Math.floor(Math.random() * 15);
     const light = 55 + Math.floor(Math.random() * 10);
-    uiPrefs.neon = `hsl(${hue} ${sat}% ${light}%)`;
+uiPrefs.neon = `hsl(${hue} ${sat}% ${light}%)`;
     uiPrefs.accent = uiPrefs.neon;
     applyUiPrefs();
     saveUiPrefs();
   });
+
+  el.resetAccent.addEventListener('click', () => {
+    uiPrefs.neon = null;
+    uiPrefs.accent = null;
+    applyUiPrefs();
+    saveUiPrefs();
+    toast('Accent reset to the default');
+  });
+
+  // Direct-pick swatches, so choosing a colour does not require a dice roll.
+  el.accentSwatches.innerHTML = NEON_HUES.map((h) => `
+    <button type="button" class="swatch" data-hue="${h}"
+            style="--c:hsl(${h} 90% 58%)"
+            aria-label="Use accent hue ${h}"></button>`).join('');
+  for (const sw of el.accentSwatches.querySelectorAll('.swatch')) {
+    sw.addEventListener('click', () => {
+      const h = sw.dataset.hue;
+      uiPrefs.neon = `hsl(${h} 90% 58%)`;
+      uiPrefs.accent = uiPrefs.neon;
+      applyUiPrefs();
+      saveUiPrefs();
+    });
+  }
 
   // Bulletproof tab & subtab event delegation
   document.addEventListener('click', (e) => {
@@ -1345,7 +1936,6 @@ function bindEvents() {
     }
   });
 
-  el.cClose.addEventListener('click', closeCompose);
   el.cDiscard.addEventListener('click', async () => {
     if (composeDraftId) {
       await engine.remove('drafts', composeDraftId);
@@ -1419,10 +2009,26 @@ function bindEvents() {
     el.keyView.textContent = publicKeyBlock(engine.identity);
   });
 
-  el.setSig.addEventListener('change', async () => {
+el.setSig.addEventListener('change', async () => {
     if (!engine) return;
     await engine.store.set('signature', el.setSig.value);
     toast('Signature saved');
+  });
+
+  el.setShowFullAddr.addEventListener('change', () => {
+    uiPrefs.showFullIdentity = el.setShowFullAddr.checked;
+    saveUiPrefs();
+    renderIdentity();
+    toast(uiPrefs.showFullIdentity
+      ? 'Addresses will be shown in full — screen privacy reduced'
+      : 'Addresses will be masked on screen');
+    void refreshAll();
+  });
+
+  el.setSuggestContacts.addEventListener('change', () => {
+    uiPrefs.suggestContacts = el.setSuggestContacts.checked;
+    saveUiPrefs();
+    if (!uiPrefs.suggestContacts) hideContactSuggest();
   });
 
   el.regenDomain.addEventListener('click', async () => {
@@ -1577,12 +2183,54 @@ function bindEvents() {
     toast(uiPrefs.fingerprintProtection ? 'Zero fingerprinting enabled (reload to apply)' : 'Zero fingerprinting disabled');
   });
 
-  el.setDomainCulture.addEventListener('change', () => {
+el.setDomainCulture.addEventListener('change', () => {
     uiPrefs.domainCulture = el.setDomainCulture.value;
     if (domainGenerator) domainGenerator.culture = uiPrefs.domainCulture;
     saveUiPrefs();
     toast(`Domain culture set to ${uiPrefs.domainCulture}`);
   });
+
+  // GnuPG settings
+  if (el.setGpg) {
+    el.setGpg.addEventListener('change', () => {
+      uiPrefs.gpgEnabled = el.setGpg.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      toast(uiPrefs.gpgEnabled
+        ? 'GnuPG integration ON — using local gpg binary'
+        : 'GnuPG integration off');
+    });
+
+    el.setGpgPath.addEventListener('change', () => {
+      uiPrefs.gpgPath = el.setGpgPath.value.trim() || 'gpg';
+      saveUiPrefs();
+    });
+  }
+
+  // Body obfuscation settings
+  if (el.setBodyObfuscate) {
+    el.setBodyObfuscate.addEventListener('change', () => {
+      uiPrefs.bodyObfuscate = el.setBodyObfuscate.checked;
+      saveUiPrefs();
+      toast(uiPrefs.bodyObfuscate
+        ? 'Body PII obfuscation ON — PII will be masked when not hovering'
+        : 'Body PII obfuscation OFF');
+      // Re-render current message if viewing one
+      if (currentMessageId) {
+        const box = document.querySelector('.page.is-active')?.dataset.page;
+        if (box) refreshList(box);
+      }
+    });
+  }
+
+  if (el.setBodyObfuscateHover) {
+    el.setBodyObfuscateHover.addEventListener('change', () => {
+      uiPrefs.bodyObfuscateHoverReveal = el.setBodyObfuscateHover.checked;
+      saveUiPrefs();
+    });
+  }
+
+  // Passphrase management
 
   // Passphrase management
   el.setPassphraseBtn.addEventListener('click', async () => {
@@ -1713,6 +2361,7 @@ async function init() {
   applyUiPrefs();
   bindEvents();
   bindOptionalEvents();
+  bindContactSuggest();
 
   // Initialize security systems with timeout and graceful degradation
   try {

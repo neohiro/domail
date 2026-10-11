@@ -9,5 +9,8 @@
     "smoke": "node tools/smoke.mjs",
     "verify": "npm test && npm run smoke",
     "cli": "node cli/domail.mjs"
+  },
+  "bin": {
+    "domail": "cli/domail.mjs"
   }
 }

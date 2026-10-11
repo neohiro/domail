@@ -185,6 +185,55 @@ async function drive(url, binary) {
         out.composerUsable = composerUsable;
         out.hasNetworkSettings = !!document.querySelector('[data-sub="network"]');
 
+        /*
+         * Actually send, and assert the mail landed. "The message never sent"
+         * was a real report that no unit test could catch, because the engine
+         * is correct and only the browser wiring was broken.
+         */
+        try {
+          const db = await new Promise((res, rej) => {
+            const r = indexedDB.open('domail');
+            r.onsuccess = () => res(r.result);
+            r.onerror = () => rej(r.error);
+          });
+          const rd = (k) => new Promise((res) => {
+            const t = db.transaction('kv', 'readonly').objectStore('kv').get(k);
+            t.onsuccess = () => res(t.result); t.onerror = () => res(null);
+          });
+          const ident = await rd('identity');
+          const self = ident?.address;
+          out.selfAddress = self || null;
+
+          to.value = self || 'probe@example.invalid';
+          document.querySelector('#cSubject').value = 'smoke probe';
+          const ed = document.querySelector('#editor');
+          ed.innerHTML = 'smoke probe body';
+          ed.dispatchEvent(new Event('input', { bubbles: true }));
+          await new Promise(r => setTimeout(r, 250));
+
+          document.querySelector('#cSend').click();
+          await new Promise(r => setTimeout(r, 2500));
+
+          const outbox = await rd('mbox:outbox');
+          const inbox = await rd('mbox:inbox');
+          out.outboxRows = outbox ? outbox.length : 0;
+          out.inboxRows = inbox ? inbox.length : 0;
+          out.sentToSelf = Boolean(self) && Boolean(inbox && inbox.some(m => m.subject === 'smoke probe'));
+          out.validationShown = document.querySelector('#validate')
+            ? !document.querySelector('#validate').hidden : false;
+          out.validationText = (document.querySelector('#vList')?.textContent || '').slice(0, 120);
+          out.toastAfterSend = (() => {
+            const t = document.querySelector('#toast');
+            return t && !t.hidden ? t.textContent : '';
+          })();
+          // Fields must be cleared after a successful send.
+          out.toCleared = to.value === '';
+          out.subjectCleared = document.querySelector('#cSubject').value === '';
+          out.editorCleared = document.querySelector('#editor').innerHTML.trim() === '';
+        } catch (e) {
+          out.sendProbeError = String(e && e.name) + ': ' + String(e && e.message).slice(0, 160);
+        }
+
         // Blind copy: the chip must never show a raw, pasteable address.
         const chip = document.querySelector('#identity');
         const shown = (chip?.textContent || '').trim();
@@ -273,6 +322,16 @@ const unlabelled = (dom.headerButtons || []).filter((b) => b.visible && !b.label
 check(unlabelled.length === 0,
   'every visible header control is labelled',
   unlabelled.map((b) => b.id).join(', '));
+
+// The regression that actually reached production: nothing was ever sent.
+check(!dom.sendProbeError, 'the send probe ran', dom.sendProbeError);
+check(dom.outboxRows > 0, 'a sent message reaches the Outbox', `outbox=${dom.outboxRows}`);
+check(dom.sentToSelf === true,
+  'a message addressed to yourself is delivered to the Inbox',
+  `inbox=${dom.inboxRows} validation="${dom.validationText}" toast="${dom.toastAfterSend}"`);
+check(dom.toCleared === true && dom.subjectCleared === true && dom.editorCleared === true,
+  'the compose fields are cleared after a successful send',
+  `to="${dom.toCleared}" subject="${dom.subjectCleared}" body="${dom.editorCleared}"`);
 
 console.log('');
 if (failures.length) {

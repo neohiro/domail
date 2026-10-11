@@ -9,7 +9,7 @@
  * - Secure headers via SW
  */
 
-const CACHE_NAME = 'domail-v4';
+const CACHE_NAME = 'domail-v5';
 const ASSETS = [
   '/',
   '/index.html',

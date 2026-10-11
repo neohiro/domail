@@ -1262,3 +1262,143 @@ html[data-mode="light"] .round--labelled .round-knob { transform: translateX(.5r
 .identity.is-copyable { cursor: pointer; transition: color var(--fast) var(--ease); }
 .identity.is-copyable:hover { color: var(--fg); text-decoration: underline dotted; }
 .identity.is-copyable.is-copied { color: var(--neon); font-weight: 700; text-decoration: none; }
+
+/* --------------------- appearance: theme + accent --------------------- */
+
+/* Dark/Light segmented control. The two halves share one rounded shell with
+   no gap, so they read as a single physical switch rather than two buttons. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line-solid);
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in oklab, var(--bg-elev) 70%, transparent);
+}
+.seg__btn {
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: .8rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  padding: .45rem 1.1rem;
+  /* No margin and no rounding between halves: they melt together. */
+  margin: 0;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease);
+}
+.seg__btn + .seg__btn { border-left: 1px solid var(--line); }
+.seg__btn:hover { color: var(--fg); background: color-mix(in oklab, var(--neon) 10%, transparent); }
+.seg__btn.is-on,
+.seg__btn[aria-checked="true"] {
+  color: #0a0a0c;
+  background: var(--neon);
+}
+.seg__btn:focus-visible { outline: 2px solid var(--line-solid); outline-offset: -2px; }
+
+/* Accent swatches */
+.swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .35rem;
+  margin: .5rem 0 1rem;
+}
+.swatch {
+  width: 1.5rem;
+  height: 1.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--c);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--fast) var(--ease), box-shadow var(--fast) var(--ease);
+}
+.swatch:hover { transform: scale(1.12); }
+.swatch:focus-visible { outline: 2px solid var(--line-solid); outline-offset: 2px; }
+
+/* --------------------- address suggestions --------------------- */
+
+.addr-suggest {
+  position: fixed;
+  z-index: 60;
+  width: min(20rem, 88vw);
+  max-height: 15rem;
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line-solid);
+  background: var(--bg-elev);
+  box-shadow: 0 .6rem 1.6rem var(--shade);
+  padding: .25rem;
+}
+.addr-suggest[hidden] { display: none; }
+.addr-suggest__row {
+  display: flex;
+  flex-direction: column;
+  gap: .05rem;
+  padding: .35rem .5rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.addr-suggest__row.is-active,
+.addr-suggest__row:hover {
+  background: color-mix(in oklab, var(--neon) 18%, transparent);
+}
+.addr-suggest__name { font-size: .8rem; font-weight: 600; }
+.addr-suggest__addr {
+  font-family: var(--mono);
+  font-size: .7rem;
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Message details disclosure + per-message actions */
+.hdr {
+  margin: .35rem 0 .7rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--bg-elev) 45%, transparent);
+}
+.hdr > summary {
+  cursor: pointer;
+  padding: .4rem .6rem;
+  font-size: .74rem;
+  color: var(--fg-muted);
+  letter-spacing: .03em;
+  user-select: none;
+  list-style: none;
+}
+.hdr > summary::-webkit-details-marker { display: none; }
+.hdr > summary::before { content: "\25B8 "; color: var(--neon); }
+.hdr[open] > summary::before { content: "\25BE "; }
+.hdr > summary:hover { color: var(--fg); }
+
+.hdr-list {
+  display: grid;
+  grid-template-columns: minmax(6rem, auto) 1fr;
+  gap: .2rem .7rem;
+  margin: 0;
+  padding: .1rem .6rem .55rem;
+  font-size: .74rem;
+}
+.hdr-list dt {
+  color: var(--fg-faint);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+.hdr-list dd {
+  margin: 0;
+  color: var(--fg-muted);
+  font-family: var(--mono);
+  overflow-wrap: anywhere;
+}
+
+/* Flagged marker in the list */
+.msg[data-flagged="true"] strong::after {
+  content: " \2691";
+  color: var(--neon);
+}

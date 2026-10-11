@@ -35,7 +35,10 @@
  */
 
 import { bytesToBase64, base64ToBytes, utf8 } from './mail.mjs';
-import * as CRYPTO from './crypto.mjs';
+import * as cryptoApi from './crypto.mjs';
+
+/* cryptoApi.CRYPTO is the constants object; the namespace functions are cryptoApi.*. */
+const { SALTBYTES, KEYBYTES } = cryptoApi.CRYPTO;
 
 /* ------------------------------------------------------------------ *
  * ASCII armor (RFC 4880 s6)
@@ -148,9 +151,12 @@ export function dearmor(text) {
  * ------------------------------------------------------------------ */
 
 const MAGIC = [0x44, 0x4f, 0x4d, 0x50]; // "DOMP"
+/* v2 added the passphrase body (kind 3); v1 is key-based only. */
 const VERSION = 2;
+const SUPPORTED_VERSIONS = new Set([1, 2]);
 const KIND_ENCRYPTED = 1;
 const KIND_SIGNED = 2;
+const KIND_PASSPHRASE = 3;
 
 const COUNT_BYTES = 2;
 const SLOT_LEN_BYTES = 4;
@@ -174,7 +180,9 @@ function readPacket(bytes) {
   for (let i = 0; i < MAGIC.length; i++) {
     if (bytes[i] !== MAGIC[i]) throw new ArmorError('bad packet magic');
   }
-  if (bytes[4] !== VERSION) throw new ArmorError(`unsupported packet version ${bytes[4]}`);
+  if (!SUPPORTED_VERSIONS.has(bytes[4])) {
+    throw new ArmorError(`unsupported packet version ${bytes[4]}`);
+  }
 
   const kind = bytes[5];
   const sigLen = (bytes[6] << 8) | bytes[7];
@@ -216,13 +224,13 @@ export async function encryptMessage(plaintext, recipients, opts = {}) {
   if (!Array.isArray(recipients) || recipients.length === 0) {
     throw new Error('at least one recipient is required');
   }
-  await CRYPTO.init();
+  await cryptoApi.init();
 
 const data = typeof plaintext === 'string' ? utf8(plaintext) : plaintext;
   const sealedSlots = [];
 
   for (const r of recipients) {
-    sealedSlots.push(await CRYPTO.seal(r.publicKey, data));
+    sealedSlots.push(await cryptoApi.seal(r.publicKey, data));
   }
 
   // [u16 count] then [u32 len][bytes] per recipient, back to back.
@@ -247,7 +255,7 @@ const data = typeof plaintext === 'string' ? utf8(plaintext) : plaintext;
   let signature = null;
   let kind = KIND_ENCRYPTED;
   if (opts.sign && opts.signer) {
-    signature = await CRYPTO.sign(true, body, opts.signer.privateKey);
+    signature = await cryptoApi.sign(true, body, opts.signer.privateKey);
     kind = KIND_SIGNED;
   }
 
@@ -265,7 +273,7 @@ const data = typeof plaintext === 'string' ? utf8(plaintext) : plaintext;
  * @returns {Promise<{text: string, signed: boolean, signatureValid: boolean|null}>}
  */
 export async function decryptMessage(armoredText, privateKey, publicKey, opts = {}) {
-  await CRYPTO.init();
+  await cryptoApi.init();
 
   const { bytes } = dearmor(armoredText);
   const packet = readPacket(bytes);
@@ -275,7 +283,7 @@ export async function decryptMessage(armoredText, privateKey, publicKey, opts = 
 
   if (signed) {
     if (opts.verify && opts.verify.publicKey) {
-      signatureValid = await CRYPTO.verify(true, packet.signature, packet.body, opts.verify.publicKey);
+      signatureValid = await cryptoApi.verify(true, packet.signature, packet.body, opts.verify.publicKey);
     }
   } else if (packet.signature.length) {
     throw new ArmorError('signature present but packet is not marked signed');
@@ -302,7 +310,7 @@ export async function decryptMessage(armoredText, privateKey, publicKey, opts = 
   const failures = [];
   for (const sealed of slots) {
     try {
-      const plain = await CRYPTO.openSealed(privateKey, publicKey, sealed);
+      const plain = await cryptoApi.openSealed(privateKey, publicKey, sealed);
       return { text: TEXT_DECODER.decode(plain), signed, signatureValid };
     } catch (e) {
       failures.push(e.message);
@@ -314,14 +322,98 @@ export async function decryptMessage(armoredText, privateKey, publicKey, opts = 
 
 /** Detached-sign an arbitrary armored string (e.g. a public key block). */
 export async function signArmored(armoredText, privateKey) {
-  await CRYPTO.init();
-  const sig = await CRYPTO.sign(true, utf8(armoredText), privateKey);
+  await cryptoApi.init();
+  const sig = await cryptoApi.sign(true, utf8(armoredText), privateKey);
   return armor('PGP SIGNATURE', sig, { Version: 'DOM Mail detached signature' });
 }
 
 /** Verify a detached signature produced by signArmored. */
 export async function verifyArmored(armoredText, signatureArmored, publicKey) {
-  await CRYPTO.init();
+  await cryptoApi.init();
   const { bytes } = dearmor(signatureArmored);
-  return CRYPTO.verify(true, bytes, utf8(armoredText), publicKey);
+  return cryptoApi.verify(true, bytes, utf8(armoredText), publicKey);
+}
+
+/* ------------------------------------------------------------------ *
+ * passphrase-based encryption
+ *
+ * Key-based sealing (above) only works when the recipient already runs DOM
+ * Mail and you hold their X25519 public key. That excludes every other mail
+ * client and every human recipient.
+ *
+ * This adds a second mode that needs nothing but a shared passphrase: the
+ * secret is stretched with Argon2id (from core/crypto.mjs) and the body is
+ * sealed with XChaCha20-Poly1305. Anyone with the passphrase and DOM Mail can
+ * read it — no key exchange, no key server, no addresses needed.
+ *
+ * Scope, stated plainly: this is still the DOMP packet format inside an
+ * OpenPGP armor envelope, so GnuPG will parse the armor but cannot decrypt it.
+ * Interop with arbitrary third-party clients would require shipping the whole
+ * RFC 4880 implementation, which this project deliberately does not do.
+ * ------------------------------------------------------------------ */
+
+/**
+ * Encrypt with a passphrase instead of recipient keys.
+ *
+ * @param {string} plaintext
+ * @param {string} passphrase
+ * @param {{aad?: Uint8Array}} opts
+ * @returns {Promise<string>} armored block
+ */
+export async function encryptWithPassphrase(plaintext, passphrase) {
+  if (!passphrase) throw new Error('a passphrase is required');
+  await cryptoApi.init();
+
+  const data = typeof plaintext === 'string' ? utf8(plaintext) : plaintext;
+  const salt = cryptoApi.randomBytes(SALTBYTES);
+  // KDF id and parameters are authenticated, so a ciphertext cannot be
+  // reinterpreted under a different stretching scheme.
+  const aad = cryptoApi.kdfAad(salt);
+  const key = await cryptoApi.deriveKey(passphrase, salt);
+  const sealed = await cryptoApi.encrypt(key, data, aad);
+  cryptoApi.zeroFill(key);
+
+  // Body: [u8 kdfVersion][salt][ciphertext]
+  const body = new Uint8Array(1 + salt.length + sealed.length);
+  body[0] = 1;
+  body.set(salt, 1);
+  body.set(sealed, 1 + salt.length);
+
+  const packet = buildPacket(KIND_PASSPHRASE, body, null);
+  return armor(PGP.ARMOR_TYPE, packet, { Version: 'DOM Mail passphrase message', Comment: 'DOMP/2' });
+}
+
+/**
+ * Decrypt a passphrase-protected message.
+ * @returns {Promise<{text: string}>}
+ */
+export async function decryptWithPassphrase(armoredText, passphrase) {
+  if (!passphrase) throw new Error('a passphrase is required');
+  await cryptoApi.init();
+
+  const { bytes } = dearmor(armoredText);
+  const packet = readPacket(bytes);
+  if (packet.kind !== KIND_PASSPHRASE) {
+    throw new ArmorError('this message is not passphrase-protected');
+  }
+  const body = packet.body;
+  if (body[0] !== 1) throw new ArmorError(`unsupported KDF version ${body[0]}`);
+  const salt = body.slice(1, 1 + SALTBYTES);
+  const sealed = body.slice(1 + SALTBYTES);
+  const key = await cryptoApi.deriveKey(passphrase, salt);
+  try {
+    return { text: TEXT_DECODER.decode(await cryptoApi.decrypt(key, sealed, cryptoApi.kdfAad(salt))) };
+  } finally {
+    cryptoApi.zeroFill(key);
+  }
+}
+
+/** True when the armored block is a passphrase message we can open. */
+export function isPassphraseMessage(armoredText) {
+  try {
+    const { bytes } = dearmor(armoredText);
+    return readPacket(bytes).kind === KIND_PASSPHRASE;
+  } catch {
+    return false;
+  }
 }
