@@ -5,13 +5,20 @@
  * A command-line interface that shares the same mail engine as the browser
  * app. Renders an ASCII inbox, allows reading and composing messages.
  *
- * Usage:
- *   node cli/domail.mjs              # interactive mode
- *   node cli/domail.mjs inbox        # list inbox
- *   node cli/domail.mjs read <id>    # read a message
- *   node cli/domail.mjs compose      # compose a new message
- *   node cli/domail.mjs send <id>    # send a draft
- *   node cli/domail.mjs wipe         # destroy all data
+* Usage:
+ *   domail                    # interactive mode
+ *   domail inbox              # list inbox
+ *   domail read <id>          # read a message
+ *   domail compose [to] [subject]  # compose a new message
+ *   domail wipe               # destroy all data
+ *   domail mask [on|off]      # address masking
+ *   domail pgp [on|off]       # armored encryption
+ *   domail relay [on|off|<url>]  # websocket relay
+ *   domail network [status|help|<transport> [on|off|info]]  # transports
+ *   domail vpn [status|on|off|set <endpoint>]  # clearnet masking
+ *
+ * `domail` maps to `node cli/domail.mjs`; run `npm link` (or `npm install -g`)
+ * once and the bare binary is on PATH for agents, bots and shell scripts.
  */
 
 import { MailEngine, memoryStore, buildMessage, parseMessage, makeMessageId } from '../core/mail.mjs';
@@ -50,6 +57,30 @@ const DEFAULTS = {
   netDNS: false,
   netSneakernet: false,
   netFederation: false,
+  // VPN gateway / clearnet masking: route public clearnet egress through a
+  // SOCKS5/HTTP/WireGuard endpoint. Off by default.
+  vpnEnabled: false,
+  vpnEndpoint: '',
+};
+
+/**
+ * Per-transport cybersecurity & anonymity disclosure, shared with the browser
+ * Settings page so CLI and web stay at exact feature parity.
+ */
+const TRANSPORTS = {
+  direct:     { key: 'netDirect',     label: 'Direct / Plain WWW (80/443 TLS)', risk: 'High',   strength: 'Universal reach and speed.', weakness: 'Your real IP is exposed to the server, ISPs and every CDN; the envelope is loggable.' },
+  tor:        { key: 'netTor',        label: 'Tor Onion Service (.onion)',     risk: 'Low',    strength: 'Strong cryptographic anonymity; hidden service location.', weakness: 'Latency; traffic-correlation if you also mix clearnet in the same session.' },
+  i2p:        { key: 'netI2p',        label: 'I2P Eepsite (.i2p)',             risk: 'Low',    strength: 'Garlic-routed P2P darknet, no central directory.', weakness: 'Slow bootstrap; short tunnel leases; a misconfigured router can leak your IP.' },
+  ens:        { key: 'netEnsIpfs',    label: 'Ethereum ENS / IPFS',            risk: 'Medium', strength: 'Censorship-resistant static publishing, immutable addressing.', weakness: 'Gateway/RPC operators see your IP; pins can expire.' },
+  radicle:    { key: 'netRadicle',    label: 'Radicle P2P Code Seed',          risk: 'Low',    strength: 'Sovereign peer-to-peer collaboration, no central forge.', weakness: 'Peer gossip exposes node identity unless wrapped in Tor/Yggdrasil.' },
+  yggdrasil:  { key: 'netYggdrasil',  label: 'Yggdrasil IPv6 Mesh',            risk: 'Low',    strength: 'End-to-end encrypted mesh routing with no DNS.', weakness: 'Peers observe the overlay path; a bad peer sees coarse traffic patterns.' },
+  nostr:      { key: 'netNostr',      label: 'Nostr Relay Sync (wss://)',      risk: 'Medium', strength: 'Decentralized store-and-forward E2EE DMs (NIP-04/17).', weakness: 'Relays are untrusted buffers seeing your IP, timing and sizes.' },
+  reticulum:  { key: 'netReticulum',  label: 'Reticulum / LXMF LoRa Mesh',     risk: 'Low',    strength: 'Zero-infrastructure store-and-forward, works with no internet.', weakness: 'Tiny bandwidth; radio direction-finding can physically locate a transmitter.' },
+  webrtc:     { key: 'netWebRTC',     label: 'WebRTC P2P Data Channels',       risk: 'Medium', strength: 'Direct encrypted browser-to-browser payload transfer.', weakness: 'ICE candidates can leak local/public IPs; needs out-of-band signalling.' },
+  ble:        { key: 'netBLE',        label: 'Bluetooth Low Energy (BLE) Mesh',risk: 'Medium', strength: 'Air-gapped local proximity exchange.', weakness: 'Advertising addresses are trackable over time; short range.' },
+  dns:        { key: 'netDNS',        label: 'DNS TXT / CNAME Tunneling',      risk: 'High',   strength: 'Bypasses firewalls that only allow DNS.', weakness: 'Resolvers log every query; tiny throughput; trivially fingerprinted by DPI.' },
+  sneakernet: { key: 'netSneakernet', label: 'USB / QR-Code Sneakernet',       risk: 'Minimal',strength: 'Absolute air-gap security; nothing touches a network.', weakness: 'Physical only: device loss/theft and QR shoulder-surfing.' },
+  federation: { key: 'netFederation', label: 'ActivityPub / Matrix / XMPP',    risk: 'Medium', strength: 'Bridges to open federated networks for broad reach.', weakness: 'Servers retain metadata; bridges can link aliases to real accounts.' },
 };
 
 /** Mask an address the same way the browser build does. */
@@ -273,51 +304,71 @@ async function interactive(engine) {
   async function doNetwork(net, val) {
     cfgCache = loadConfig();
     const c = cfgCache;
-    const validNets = ['direct', 'tor', 'i2p', 'ens', 'radicle', 'yggdrasil', 'nostr', 'reticulum', 'webrtc', 'ble', 'dns', 'sneakernet', 'federation'];
+    const validNets = Object.keys(TRANSPORTS);
     if (!net || net === 'status') {
       console.log('Multi-Network & Advanced Transports (13 Vectors):');
-      console.log(`  Direct (80/443 TLS): ${c.netDirect !== false ? 'ON' : 'off'}`);
-      console.log(`  Tor Onion Service:   ${c.netTor ? 'ON' : 'off'}`);
-      console.log(`  I2P Eepsite:         ${c.netI2p ? 'ON' : 'off'}`);
-      console.log(`  ENS / IPFS Gateway:  ${c.netEnsIpfs ? 'ON' : 'off'}`);
-      console.log(`  Radicle P2P:         ${c.netRadicle ? 'ON' : 'off'}`);
-      console.log(`  Yggdrasil Mesh:      ${c.netYggdrasil ? 'ON' : 'off'}`);
-      console.log(`  Nostr Relay Sync:    ${c.netNostr ? 'ON' : 'off'}`);
-      console.log(`  Reticulum / LXMF:    ${c.netReticulum ? 'ON' : 'off'}`);
-      console.log(`  WebRTC P2P:          ${c.netWebRTC ? 'ON' : 'off'}`);
-      console.log(`  BLE Proximity Mesh:  ${c.netBLE ? 'ON' : 'off'}`);
-      console.log(`  DNS TXT Tunneling:   ${c.netDNS ? 'ON' : 'off'}`);
-      console.log(`  USB/QR Sneakernet:   ${c.netSneakernet ? 'ON' : 'off'}`);
-      console.log(`  Federation Gateway:  ${c.netFederation ? 'ON' : 'off'}`);
+      for (const [slug, t] of Object.entries(TRANSPORTS)) {
+        const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
+        console.log(`  ${slug.padEnd(11)} ${on ? 'ON ' : 'off'}  risk=${t.risk.padEnd(7)} ${t.label}`);
+      }
+      console.log('  Use: network <transport> [on|off|info]');
       return;
     }
-    const keyMap = {
-      direct: 'netDirect',
-      tor: 'netTor',
-      i2p: 'netI2p',
-      ens: 'netEnsIpfs',
-      radicle: 'netRadicle',
-      yggdrasil: 'netYggdrasil',
-      nostr: 'netNostr',
-      reticulum: 'netReticulum',
-      webrtc: 'netWebRTC',
-      ble: 'netBLE',
-      dns: 'netDNS',
-      sneakernet: 'netSneakernet',
-      federation: 'netFederation'
-    };
-    const key = keyMap[net.toLowerCase()];
-    if (!key) {
+    if (net === 'help') {
+      console.log('Transport cybersecurity & anonymity disclosures:');
+      for (const [slug, t] of Object.entries(TRANSPORTS)) {
+        console.log(`\n  ${slug} — ${t.label}  [risk: ${t.risk}]`);
+        console.log(`    strength: ${t.strength}`);
+        console.log(`    risk:     ${t.weakness}`);
+      }
+      return;
+    }
+    const t = TRANSPORTS[net.toLowerCase()];
+    if (!t) {
       console.log(`Unknown network transport: ${net}. Valid: ${validNets.join(', ')}`);
       return;
     }
     if (val === 'on' || val === 'off') {
-      c[key] = val === 'on';
+      c[t.key] = val === 'on';
       saveConfig(c);
-      console.log(`${net} transport is now ${val.toUpperCase()}.`);
+      console.log(`${net} transport is now ${val.toUpperCase()} (risk: ${t.risk}).`);
+      if (val === 'on') console.log(`  WARNING: ${t.weakness}`);
+    } else if (val === 'info') {
+      console.log(`${t.label}  [risk: ${t.risk}]`);
+      console.log(`  strength: ${t.strength}`);
+      console.log(`  risk:     ${t.weakness}`);
     } else {
-      console.log(`${net} transport is currently ${c[key] ? 'ON' : 'off'}. Use: network ${net} [on|off]`);
+      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
+      console.log(`${net} transport is currently ${on ? 'ON' : 'off'} (risk: ${t.risk}). Use: network ${net} [on|off|info]`);
     }
+  }
+
+  async function doVpn(val, endpoint) {
+    cfgCache = loadConfig();
+    const c = cfgCache;
+    if (!val || val === 'status') {
+      console.log(`VPN gateway is ${c.vpnEnabled ? 'ON' : 'off'}${c.vpnEndpoint ? ` (${c.vpnEndpoint})` : ''}.`);
+      console.log('  Use: vpn on | vpn off | vpn set <socks5://host:port>');
+      if (c.vpnEnabled) {
+        console.log('  WARNING: public clearnet mail egresses via the proxy IP.');
+        console.log('  WARNING: the VPN provider still sees your connection endpoint (not E2EE contents).');
+      }
+      return;
+    }
+    if (val === 'on' || val === 'off') {
+      c.vpnEnabled = val === 'on';
+      saveConfig(c);
+      console.log(`VPN gateway is now ${c.vpnEnabled ? 'ON' : 'off'}.`);
+      return;
+    }
+    if (val === 'set') {
+      if (!endpoint) { console.log('Usage: vpn set <socks5://host:port | http://host:port>'); return; }
+      c.vpnEndpoint = endpoint;
+      saveConfig(c);
+      console.log(`VPN endpoint set to ${endpoint}`);
+      return;
+    }
+    console.log('Usage: vpn [on|off|set <endpoint>|status]');
   }
 
   while (true) {
@@ -388,6 +439,8 @@ showMessage(engine, id);
       await doRelay(args.join(' '));
     } else if (cmd === 'network') {
       await doNetwork(args[0], args[1]);
+    } else if (cmd === 'vpn') {
+      await doVpn(args[0], args[1]);
     } else if (cmd === 'compose') {
       const to = await ask('To: ');
       const subject = await ask('Subject: ');
@@ -421,6 +474,9 @@ const [cmd, ...args] = process.argv.slice(2);
 
 if (!cmd || cmd === 'interactive') {
   await interactive(engine);
+} else if (cmd === 'help' || cmd === '--help' || cmd === '-h') {
+  console.log('Usage: domail [inbox|outbox|read <id>|compose|wipe|mask|pgp|relay|network|vpn|help|interactive]');
+  console.log('Run `domail network help` for per-transport cybersecurity & anonymity disclosures.');
 } else if (cmd === 'inbox') {
   const inbox = await engine.list('inbox');
   engine._lists = { inbox };
@@ -508,6 +564,66 @@ if (!cmd || cmd === 'interactive') {
     saveConfig(c);
     console.log(`Relay URL set to ${arg}`);
   }
+} else if (cmd === 'network') {
+  const c = loadConfig();
+  cfgCache = c;
+  const validNets = Object.keys(TRANSPORTS);
+  const net = args[0];
+  const val = args[1];
+  if (!net || net === 'status') {
+    console.log('Multi-Network & Advanced Transports (13 Vectors):');
+    for (const [slug, t] of Object.entries(TRANSPORTS)) {
+      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
+      console.log(`  ${slug.padEnd(11)} ${on ? 'ON ' : 'off'}  risk=${t.risk.padEnd(7)} ${t.label}`);
+    }
+    console.log('  Use: node cli/domail.mjs network <transport> [on|off|info]');
+  } else if (net === 'help') {
+    console.log('Transport cybersecurity & anonymity disclosures:');
+    for (const [slug, t] of Object.entries(TRANSPORTS)) {
+      console.log(`\n  ${slug} — ${t.label}  [risk: ${t.risk}]`);
+      console.log(`    strength: ${t.strength}`);
+      console.log(`    risk:     ${t.weakness}`);
+    }
+  } else {
+    const t = TRANSPORTS[net.toLowerCase()];
+    if (!t) { console.log(`Unknown network transport: ${net}. Valid: ${validNets.join(', ')}`); process.exit(1); }
+    if (val === 'on' || val === 'off') {
+      c[t.key] = val === 'on';
+      saveConfig(c);
+      console.log(`${net} transport is now ${val.toUpperCase()} (risk: ${t.risk}).`);
+      if (val === 'on') console.log(`  WARNING: ${t.weakness}`);
+    } else if (val === 'info') {
+      console.log(`${t.label}  [risk: ${t.risk}]`);
+      console.log(`  strength: ${t.strength}`);
+      console.log(`  risk:     ${t.weakness}`);
+    } else {
+      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
+      console.log(`${net} transport is currently ${on ? 'ON' : 'off'} (risk: ${t.risk}). Use: network ${net} [on|off|info]`);
+    }
+  }
+} else if (cmd === 'vpn') {
+  const c = loadConfig();
+  const val = args[0];
+  const endpoint = args[1];
+  if (!val || val === 'status') {
+    console.log(`VPN gateway is ${c.vpnEnabled ? 'ON' : 'off'}${c.vpnEndpoint ? ` (${c.vpnEndpoint})` : ''}.`);
+    console.log('  Use: vpn on | vpn off | vpn set <socks5://host:port>');
+    if (c.vpnEnabled) {
+      console.log('  WARNING: the VPN provider still sees your connection endpoint (not E2EE contents).');
+    }
+  } else if (val === 'on' || val === 'off') {
+    c.vpnEnabled = val === 'on';
+    saveConfig(c);
+    console.log(`VPN gateway is now ${c.vpnEnabled ? 'ON' : 'off'}.`);
+  } else if (val === 'set') {
+    if (!endpoint) { console.log('Usage: vpn set <socks5://host:port | http://host:port>'); process.exit(1); }
+    c.vpnEndpoint = endpoint;
+    saveConfig(c);
+    console.log(`VPN endpoint set to ${endpoint}`);
+  } else {
+    console.error('Usage: node cli/domail.mjs vpn [on|off|set <endpoint>|status]');
+    process.exit(1);
+  }
 } else {
-  console.log('Usage: node cli/domail.mjs [inbox|outbox|read <id>|compose|wipe|mask|pgp|relay|interactive]');
+  console.log('Usage: domail [inbox|outbox|read <id>|compose|wipe|mask|pgp|relay|network|vpn|help|interactive]');
 }

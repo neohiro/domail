@@ -467,22 +467,75 @@
           <span class="switch-label">Multi-Route</span>
         </header>
         <p class="minor">
-          Toggle individual network transports, anonymity routes, and air-gapped vectors. All, some, or none can be active (default uses Direct HTTPS 80/443 TLS, which can also be disabled). Cache this page offline via Service Worker for full untethered multi-network operation.
+          Toggle individual network transports, anonymity routes, and air-gapped vectors. All, some, or none can be active (default uses Direct HTTPS 80/443 TLS, which can also be disabled). Cache this page offline via Service Worker for full untethered multi-network operation. Expand any vector for its cybersecurity &amp; anonymity risk disclosure.
         </p>
-        <div style="display: flex; flex-direction: column; gap: 0.85rem; margin-top: 1rem;">
-          <label class="check"><input id="netDirect" type="checkbox"> <strong>Direct / Plain WWW (80/443 TLS)</strong> — <span class="minor">Strengths: Universal compatibility, speed. Weaknesses: Clearnet IP exposure, ISP logging.</span></label>
-          <label class="check"><input id="netTor" type="checkbox"> <strong>Tor Onion Service (<code>.onion</code>)</strong> — <span class="minor">Strengths: Strong anonymity, hidden location. Weaknesses: Higher latency.</span></label>
-          <label class="check"><input id="netI2p" type="checkbox"> <strong>I2P Eepsite (<code>.i2p</code>)</strong> — <span class="minor">Strengths: Garlic-routed P2P darknet. Weaknesses: Slower bootstrap.</span></label>
-          <label class="check"><input id="netEnsIpfs" type="checkbox"> <strong>Ethereum ENS / IPFS (<code>domail.eth</code>)</strong> — <span class="minor">Strengths: Censorship-resistant static publishing. Weaknesses: Pinning/gateway dependency.</span></label>
-          <label class="check"><input id="netRadicle" type="checkbox"> <strong>Radicle P2P Code Seed (<code>rad://</code>)</strong> — <span class="minor">Strengths: Sovereign P2P code collaboration. Weaknesses: Requires seed node.</span></label>
-          <label class="check"><input id="netYggdrasil" type="checkbox"> <strong>Yggdrasil Mesh (IPv6 Overlay)</strong> — <span class="minor">Strengths: End-to-end encrypted mesh without DNS. Weaknesses: Requires peering.</span></label>
-          <label class="check"><input id="netNostr" type="checkbox"> <strong>Nostr Relay Sync (<code>wss://</code>)</strong> — <span class="minor">Strengths: Decentralized E2EE DMs (NIP-04/17). Weaknesses: Relay availability.</span></label>
-          <label class="check"><input id="netReticulum" type="checkbox"> <strong>Reticulum / LXMF LoRa Mesh</strong> — <span class="minor">Strengths: Zero-infrastructure offline packet radio. Weaknesses: Low bandwidth.</span></label>
-          <label class="check"><input id="netWebRTC" type="checkbox"> <strong>WebRTC P2P Data Channels</strong> — <span class="minor">Strengths: Direct browser-to-browser streaming. Weaknesses: Requires out-of-band signaling.</span></label>
-          <label class="check"><input id="netBLE" type="checkbox"> <strong>Bluetooth Low Energy (BLE) Mesh</strong> — <span class="minor">Strengths: Air-gapped local proximity exchange. Weaknesses: Short range.</span></label>
-          <label class="check"><input id="netDNS" type="checkbox"> <strong>DNS TXT / CNAME Tunneling</strong> — <span class="minor">Strengths: Bypass restrictive firewalls. Weaknesses: Very low throughput.</span></label>
-          <label class="check"><input id="netSneakernet" type="checkbox"> <strong>USB / QR-Code Sneakernet</strong> — <span class="minor">Strengths: Absolute air-gap security. Weaknesses: Manual transport.</span></label>
-          <label class="check"><input id="netFederation" type="checkbox"> <strong>ActivityPub / Matrix / XMPP</strong> — <span class="minor">Strengths: Open federated network bridges. Weaknesses: Requires adapter gateway.</span></label>
+        <div class="net-list" style="display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem;">
+
+          <details class="net-vec" data-risk="high">
+            <summary><label class="check"><input id="netDirect" type="checkbox"> <strong>Direct / Plain WWW (80/443 TLS)</strong> <span class="risk risk--high">Risk: High</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Universal reach and speed. <strong>Anonymity risk:</strong> Your real IP is exposed to the server and every intermediary; ISPs, CDNs and mail gateways can log the envelope. <strong>Mitigation:</strong> Combine with the VPN gateway or Tor; keep PGP on so contents stay sealed even when transport metadata leaks.</p>
+          </details>
+
+          <details class="net-vec" data-risk="low">
+            <summary><label class="check"><input id="netTor" type="checkbox"> <strong>Tor Onion Service (<code>.onion</code>)</strong> <span class="risk risk--low">Risk: Low</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Strong cryptographic anonymity, hidden service location. <strong>Anonymity risk:</strong> Latency and traffic correlation attacks if you also use clearnet in the same session; guard relays may be hostile. <strong>Mitigation:</strong> Use the Tor Browser circuit discipline, avoid logging in to identifying accounts, and never mix clearnet and onion identities.</p>
+          </details>
+
+          <details class="net-vec" data-risk="low">
+            <summary><label class="check"><input id="netI2p" type="checkbox"> <strong>I2P Eepsite (<code>.i2p</code>)</strong> <span class="risk risk--low">Risk: Low</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Garlic-routed peer-to-peer darknet, no central directory. <strong>Anonymity risk:</strong> Slow bootstrap; tunnels are shorter-lived so availability can drop; a misconfigured router can leak your real IP. <strong>Mitigation:</strong> Keep the i2pd container firewalled, verify tunnel leases, and do not enable inbound clearnet on the same host.</p>
+          </details>
+
+          <details class="net-vec" data-risk="medium">
+            <summary><label class="check"><input id="netEnsIpfs" type="checkbox"> <strong>Ethereum ENS / IPFS (<code>domail.eth</code>)</strong> <span class="risk risk--medium">Risk: Medium</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Censorship-resistant static publishing with immutable content addressing. <strong>Anonymity risk:</strong> IPFS gateway operators and ENS RPC providers see your IP and query patterns; pins can expire. <strong>Mitigation:</strong> Run your own IPFS node on <em>kernel</em>, use a local ENS resolver, and pin critical content to multiple nodes.</p>
+          </details>
+
+          <details class="net-vec" data-risk="low">
+            <summary><label class="check"><input id="netRadicle" type="checkbox"> <strong>Radicle P2P Code Seed (<code>rad://</code>)</strong> <span class="risk risk--low">Risk: Low</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Sovereign peer-to-peer collaboration, no central forge. <strong>Anonymity risk:</strong> Peer gossip exposes your node's network identity unless wrapped in Tor/Yggdrasil; seeds are public. <strong>Mitigation:</strong> Run the Radicle node on <em>kernel</em> behind Tor, and never commit personal keys to a public seed.</p>
+          </details>
+
+          <details class="net-vec" data-risk="low">
+            <summary><label class="check"><input id="netYggdrasil" type="checkbox"> <strong>Yggdrasil Mesh (IPv6 Overlay)</strong> <span class="risk risk--low">Risk: Low</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> End-to-end encrypted mesh routing with no DNS or central authority. <strong>Anonymity risk:</strong> Peers see the overlay routing path; a compromised peer can observe coarse traffic patterns. <strong>Mitigation:</strong> Combine with an anonymizing layer, rotate peering keys, and keep the mesh overlay off completely separate interfaces from clearnet.</p>
+          </details>
+
+          <details class="net-vec" data-risk="medium">
+            <summary><label class="check"><input id="netNostr" type="checkbox"> <strong>Nostr Relay Sync (<code>wss://</code>)</strong> <span class="risk risk--medium">Risk: Medium</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Decentralized store-and-forward E2EE direct messages (NIP-04 / NIP-17). <strong>Anonymity risk:</strong> Relays are untrusted buffers that see your IP, timing and message sizes; a relay can drop or correlate events. <strong>Mitigation:</strong> Self-host the strfry relay on <em>kernel</em>, publish over Tor or VPN, and treat relay metadata as public.</p>
+          </details>
+
+          <details class="net-vec" data-risk="low">
+            <summary><label class="check"><input id="netReticulum" type="checkbox"> <strong>Reticulum / LXMF LoRa Mesh</strong> <span class="risk risk--low">Risk: Low</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Zero-infrastructure store-and-forward over packet radio — works with no internet at all. <strong>Anonymity risk:</strong> Very low bandwidth; radio direction-finding can physically locate a transmitter. <strong>Mitigation:</strong> Encrypt with LXMF/PGP, keep transmissions short, and use directional or reduced-power antennas.</p>
+          </details>
+
+          <details class="net-vec" data-risk="medium">
+            <summary><label class="check"><input id="netWebRTC" type="checkbox"> <strong>WebRTC P2P Data Channels</strong> <span class="risk risk--medium">Risk: Medium</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Direct encrypted browser-to-browser transfer, no relay server for payload. <strong>Anonymity risk:</strong> ICE candidates can leak local and public IP addresses; signalling must be exchanged out-of-band. <strong>Mitigation:</strong> Force relay-only (TURN) ICE, exchange SDP over an already-anonymized channel, and disable non-proxied UDP.</p>
+          </details>
+
+          <details class="net-vec" data-risk="medium">
+            <summary><label class="check"><input id="netBLE" type="checkbox"> <strong>Bluetooth Low Energy (BLE) Mesh</strong> <span class="risk risk--medium">Risk: Medium</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Air-gapped local proximity exchange with no internet. <strong>Anonymity risk:</strong> Advertising addresses can be tracked over time; short radio range; pairing/relay nodes can observe adjacency. <strong>Mitigation:</strong> Rotate BLE addresses, keep payloads PGP-sealed, and treat any nearby observer as hostile.</p>
+          </details>
+
+          <details class="net-vec" data-risk="high">
+            <summary><label class="check"><input id="netDNS" type="checkbox"> <strong>DNS TXT / CNAME Tunneling</strong> <span class="risk risk--high">Risk: High</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Bypasses restrictive firewalls and captive portals that only permit DNS. <strong>Anonymity risk:</strong> Recursive resolvers log every query; throughput is tiny; unusual query volumes are trivially fingerprinted by deep-packet inspection. <strong>Mitigation:</strong> Use a trusted DoH/DoT resolver, keep payloads encrypted, and rate-limit to blend with normal DNS.</p>
+          </details>
+
+          <details class="net-vec" data-risk="none">
+            <summary><label class="check"><input id="netSneakernet" type="checkbox"> <strong>USB / QR-Code Sneakernet</strong> <span class="risk risk--none">Risk: Minimal</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Absolute air-gap security — nothing ever touches a network. <strong>Anonymity risk:</strong> Purely physical: device loss/theft and QR shoulder-surfing. <strong>Mitigation:</strong> Encrypt volumes, verify fingerprints out-of-band, and destroy media after transfer.</p>
+          </details>
+
+          <details class="net-vec" data-risk="medium">
+            <summary><label class="check"><input id="netFederation" type="checkbox"> <strong>ActivityPub / Matrix / XMPP</strong> <span class="risk risk--medium">Risk: Medium</span></label></summary>
+            <p class="warn-detail"><strong>Strength:</strong> Bridges to open federated social/chat networks for broad reach. <strong>Anonymity risk:</strong> Federation servers retain metadata, and bridges may link a pseudonymous DOM Mail identity to a real federated account. <strong>Mitigation:</strong> Self-host the gateway on <em>kernel</em>, compartmentalize identities, and never reuse a speaking alias across networks.</p>
+          </details>
+
         </div>
       </section>
 

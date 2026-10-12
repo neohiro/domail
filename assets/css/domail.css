@@ -1202,6 +1202,48 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
 /* Once a feature is on, its warning turns red so the trade-off stays visible. */
 .opt.is-on .warn { border-color: color-mix(in oklab, #e01f26 34%, transparent); }
 
+/* Multi-network transport vectors: per-vector disclosure accordions */
+.net-vec {
+  border: 1px solid color-mix(in oklab, var(--fg) 12%, transparent);
+  border-radius: 8px;
+  padding: .15rem .55rem;
+  background: color-mix(in oklab, var(--fg) 3%, transparent);
+}
+.net-vec[open] { background: color-mix(in oklab, var(--neon) 6%, transparent); }
+.net-vec > summary {
+  cursor: pointer;
+  padding: .45rem 0;
+  list-style: none;
+  display: flex;
+  align-items: center;
+}
+.net-vec > summary::-webkit-details-marker { display: none; }
+.net-vec > summary::after {
+  content: '▸';
+  margin-left: auto;
+  color: var(--fg-faint);
+  font-size: .8rem;
+  transition: transform .15s ease;
+}
+.net-vec[open] > summary::after { transform: rotate(90deg); }
+.net-vec > summary .check { margin: 0; display: flex; align-items: center; gap: .4rem; cursor: pointer; }
+.net-vec .warn-detail { display: block; padding: 0 0 .55rem .1rem; line-height: 1.45; }
+.risk {
+  display: inline-block;
+  margin-left: .45rem;
+  padding: .08rem .4rem;
+  border-radius: 999px;
+  font-size: .6rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+.risk--none { color: #06210f; background: #4fd68a; }
+.risk--low { color: #06210f; background: #9fe0a1; }
+.risk--medium { color: #1a1508; background: #e0c11f; }
+.risk--high { color: #fff; background: #e01f26; }
+
 #relayStatus { text-transform: capitalize; }
 #relayStatus[data-state="connected"] { color: var(--neon); border-color: var(--neon); }
 #relayStatus[data-state="error"] { color: #ff8080; border-color: #e01f26; }

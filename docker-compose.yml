@@ -1,22 +1,38 @@
+# DOM Mail multi-network anonymity stack.
+#
+# Deployed on the Tailscale host "kernel" (ssh kernel / ssh kernel.tailnet).
+# Runs every network/transport daemon that needs to exist SOMEWHERE so any
+# user can reach DOM Mail from any vector: clearnet, Tor, I2P, Yggdrasil,
+# Nostr, Radicle, IPFS, Reticulum, and a VPN egress proxy for the clearnet
+# SMTP gateways (Gmail/Outlook). Each service carries its own security
+# settings (cap_drop, no-new-privileges, read-only roots, healthchecks).
+#
+# The browser/CLI app itself is static and client-side; these containers only
+# terminate transport so mail can arrive from anywhere. Start with:
+#   docker compose up -d
 version: '3.8'
 
 networks:
-  mainframe-net:
+  kernel-net:
     driver: bridge
     ipam:
       config:
         - subnet: 172.28.0.0/16
+      # The darknet services stay firewalled to their own network unless
+      # explicitly bridged; only Caddy exposes published ports.
 
 services:
-  # 1. Caddy Web Server & Reverse Proxy (Handles HTTPS, VPN proxying, and multi-network routing)
+  # ------------------------------------------------------------------
+  # 1. Caddy — clearnet HTTP(S) origin + reverse proxy for every vector
+  # ------------------------------------------------------------------
   caddy:
     image: caddy:2.7-alpine
     container_name: domail-caddy
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-      - "7777:7777" # Nostr Relay websocket
+      - "80:80"       # clearnet HTTP
+      - "443:443"     # clearnet HTTPS (TLS)
+      - "7777:7777"   # Nostr relay websocket (wss://kernel:7777)
     volumes:
       - ./index.html:/usr/share/caddy/index.html:ro
       - ./assets:/usr/share/caddy/assets:ro
@@ -24,10 +40,25 @@ services:
       - ./sw.js:/usr/share/caddy/sw.js:ro
       - ./manifest.webmanifest:/usr/share/caddy/manifest.webmanifest:ro
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     networks:
-      - mainframe-net
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
-  # 2. Tor v3 Onion Service Daemon
+  # ------------------------------------------------------------------
+  # 2. Tor v3 onion service (its own router, its own hidden-service keys)
+  # ------------------------------------------------------------------
   tor:
     image: goldy/tor-hidden-service:latest
     container_name: domail-tor
@@ -35,23 +66,37 @@ services:
     environment:
       - TOR_HS_PORTS=80:caddy:80
     volumes:
-      - tor_data:/var/lib/tor/hidden_service
+      - tor_data:/var/lib/tor/hidden_service   # .onion identity keys live here
     networks:
-      - mainframe-net
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
 
-  # 3. I2P Router Daemon (i2pd)
+  # ------------------------------------------------------------------
+  # 3. I2P router (i2pd) exposing its own eepsite
+  # ------------------------------------------------------------------
   i2pd:
     image: purplei2p/i2pd:latest
     container_name: domail-i2pd
     restart: unless-stopped
     ports:
-      - "7070:7070" # HTTP console
+      - "127.0.0.1:7070:7070"   # i2pd console bound to loopback only
     volumes:
       - i2p_data:/home/i2pd/.i2pd
     networks:
-      - mainframe-net
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
-  # 4. Nostr Relay Daemon (strfry)
+  # ------------------------------------------------------------------
+  # 4. Nostr relay (strfry) — self-hosted so users never trust a third party
+  # ------------------------------------------------------------------
   nostr-relay:
     image: ghcr.io/hoytech/strfry:latest
     container_name: domail-nostr
@@ -59,21 +104,36 @@ services:
     volumes:
       - nostr_data:/app/strfry-db
     networks:
-      - mainframe-net
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "strfry", "stats"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
 
-  # 5. Yggdrasil IPv6 Mesh Overlay Daemon
+  # ------------------------------------------------------------------
+  # 5. Yggdrasil IPv6 mesh overlay (end-to-end encrypted mesh egress)
+  # ------------------------------------------------------------------
   yggdrasil:
     image: yggdrasil/yggdrasil:latest
     container_name: domail-yggdrasil
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
+    cap_drop:
+      - ALL
     volumes:
       - ygg_data:/etc/yggdrasil
     networks:
-      - mainframe-net
+      - kernel-net
 
-  # 6. Radicle Seed Node (P2P Code Collaboration)
+  # ------------------------------------------------------------------
+  # 6. Radicle seed node (sovereign peer-to-peer code + replication)
+  # ------------------------------------------------------------------
   radicle:
     image: radicle/radicle-node:latest
     container_name: domail-radicle
@@ -81,11 +141,88 @@ services:
     volumes:
       - radicle_data:/root/.radicle
     networks:
-      - mainframe-net
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # ------------------------------------------------------------------
+  # 7. IPFS node (kubo) for ENS/IPFS static publishing + pinning
+  # ------------------------------------------------------------------
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: domail-ipfs
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:5001:5001"   # API bound to loopback only
+    volumes:
+      - ipfs_data:/data/ipfs
+    networks:
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "ipfs", "id"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+
+  # ------------------------------------------------------------------
+  # 8. Reticulum / LXMF (rnsd) — zero-infrastructure packet-radio mesh
+  # ------------------------------------------------------------------
+  rnsd:
+    image: markqvist/rnsd:latest
+    container_name: domail-rnsd
+    restart: unless-stopped
+    volumes:
+      - rns_data:/root/.reticulum
+    networks:
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # ------------------------------------------------------------------
+  # 9. VPN egress (gluetun) — SOCKS5/HTTP proxy for the clearnet SMTP
+  #    gateways and the browser "VPN gateway" setting. Mount your own
+  #    provider config (wireguard/openvpn) into /gluetun/wg0.conf.
+  #    PORTS 8080 (SOCKS5) and 8888 (HTTP proxy) are the Mixmaster endpoints
+  #    users type into Settings -> Network -> VPN Gateway.
+  # ------------------------------------------------------------------
+  vpn-egress:
+    image: qmcgaw/gluetun:latest
+    container_name: domail-vpn-egress
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - vpn_data:/gluetun
+    environment:
+      - SOCKS5=on
+      - HTTPPROXY=on
+    ports:
+      - "127.0.0.1:8080:8080/tcp"   # SOCKS5 (loopback only)
+      - "127.0.0.1:8888:8888/tcp"   # HTTP proxy (loopback only)
+    networks:
+      - kernel-net
+    security_opt:
+      - no-new-privileges:true
 
 volumes:
+  caddy_data:
+  caddy_config:
   tor_data:
   i2p_data:
   nostr_data:
   ygg_data:
   radicle_data:
+  ipfs_data:
+  rns_data:
+  vpn_data:

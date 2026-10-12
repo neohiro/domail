@@ -192,6 +192,8 @@ let uiPrefs = {
   netFederation: false,
   vpnEnabled: false,
   vpnEndpoint: '',
+  vpnConfigName: '',
+  vpnConfigBody: '',
 };
 
 const $ = (s) => document.querySelector(s);
@@ -892,6 +894,23 @@ if (el.setRelay) {
       });
     }
   }
+
+  // VPN gateway / clearnet masking
+  if (el.setVpn) {
+    el.setVpn.checked = !!uiPrefs.vpnEnabled;
+    if (el.vpnState) el.vpnState.textContent = uiPrefs.vpnEnabled ? 'On' : 'Off';
+    const vpnSec = document.getElementById('optVpn');
+    if (vpnSec) vpnSec.classList.toggle('is-on', !!uiPrefs.vpnEnabled);
+  }
+  if (el.setVpnEndpoint) {
+    el.setVpnEndpoint.value = uiPrefs.vpnEndpoint || '';
+    el.setVpnEndpoint.disabled = !uiPrefs.vpnEnabled;
+  }
+  if (el.vpnFileStatus) {
+    el.vpnFileStatus.textContent = uiPrefs.vpnConfigName
+      ? `Loaded: ${uiPrefs.vpnConfigName}`
+      : 'No config loaded';
+  }
 }
 
 function bindOptionalEvents() {
@@ -919,6 +938,41 @@ function bindOptionalEvents() {
       });
     }
   }
+
+  // VPN gateway / clearnet masking events
+  if (el.setVpn) {
+    el.setVpn.addEventListener('change', () => {
+      uiPrefs.vpnEnabled = el.setVpn.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      toast(uiPrefs.vpnEnabled
+        ? 'VPN gateway ON — public clearnet mail will egress via your proxy IP'
+        : 'VPN gateway off — public clearnet mail uses your real IP');
+    });
+  }
+  if (el.setVpnEndpoint) {
+    el.setVpnEndpoint.addEventListener('change', () => {
+      uiPrefs.vpnEndpoint = el.setVpnEndpoint.value.trim();
+      saveUiPrefs();
+      toast(uiPrefs.vpnEndpoint ? 'VPN endpoint saved' : 'VPN endpoint cleared');
+    });
+  }
+  if (el.setVpnFile) {
+    el.setVpnFile.addEventListener('change', () => {
+      const file = el.setVpnFile.files && el.setVpnFile.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        uiPrefs.vpnConfigName = file.name;
+        uiPrefs.vpnConfigBody = String(reader.result || '').slice(0, 65536);
+        saveUiPrefs();
+        paintOptionalPrefs();
+        toast(`VPN config "${file.name}" loaded locally (never uploaded)`);
+      };
+      reader.readAsText(file);
+    });
+  }
+
   if (el.setPgp) {
     el.setPgp.addEventListener('change', () => {
       uiPrefs.pgp = el.setPgp.checked;

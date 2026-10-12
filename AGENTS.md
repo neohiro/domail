@@ -44,8 +44,13 @@ All 42 tests must pass before committing.
 
 DOM Mail provides a fully non-interactive, scriptable Node.js CLI (`cli/domail.mjs`) that shares the exact same cryptographic mail engine as the browser app. This allows AI agents, LLM tool-use runners, and autonomous bots to communicate via end-to-end encrypted mail offline without cloud dependencies:
 
-- **Check Inbox**: `node cli/domail.mjs inbox`
-- **Read Message**: `node cli/domail.mjs read <id>`
-- **Compose & Send**: `node cli/domail.mjs compose <recipient@domain> <subject> <body>`
-- **Configure Network Vectors**: `node cli/domail.mjs network <transport> <on|off>` (supports all 13 transport vectors: `direct`, `tor`, `i2p`, `ens`, `radicle`, `yggdrasil`, `nostr`, `reticulum`, `webrtc`, `ble`, `dns`, `sneakernet`, `federation`)
-- **Wipe Local Storage**: `node cli/domail.mjs wipe`
+- `node cli/domail.mjs inbox` — check my inbox
+- `node cli/domail.mjs read <id>` — read a specific message
+- `node cli/domail.mjs compose <recipient@domain> <subject> <body>` — compose and send
+- `node cli/domail.mjs network <status|help|<transport> [on|off|info]>` — toggle and disclose all 13 transport vectors (`direct`, `tor`, `i2p`, `ens`, `radicle`, `yggdrasil`, `nostr`, `reticulum`, `webrtc`, `ble`, `dns`, `sneakernet`, `federation`). `network help` prints the cybersecurity/anonymity disclosure for every vector.
+- `node cli/domail.mjs vpn [status|on|off|set <endpoint>]` — route public clearnet egress through a SOCKS5/HTTP/WireGuard endpoint
+- `node cli/domail.mjs wipe` — destroy all local stores
+
+### Run the CLI without the `node` prefix
+
+`cli/domail.mjs` is an ESM Node.js executable (it starts with `#!/usr/bin/env node`), so bare `node` is the zero-install invocation. The package also ships a `bin` entry: run `npm link` (or `npm install -g .` from a checkout) once, then `domail inbox` works directly for shells, agents, and cron/MCP tool runners.

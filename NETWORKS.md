@@ -112,9 +112,72 @@ Beyond Tor, I2P, Nostr, and Reticulum, DOM Mail's decoupled MIME/crypto core sup
 5. **ActivityPub / Matrix / XMPP Federation Gateways**
    - Lightweight adapter daemons that bridge DOM Mail's Ed25519 cryptographic identities to federated chat and messaging networks, allowing mail to traverse open decentralized networks.
 
+In a production deployment **every one of these transports is terminated on the
+`kernel` Tailscale host** (`ssh kernel`) by a shared, hardened Docker compose
+stack (`docker-compose.yml` + `Caddyfile`) so that *any user from any network* —
+clearnet, `.onion`, `.i2p`, Yggdrasil, Nostr, IPFS, Radicle, Reticulum — lands on
+the same DOM Mail build with their own anonymous route in:
+
+| Container | Transport it terminates | Security posture |
+| :--- | :--- | :--- |
+| `caddy` | Clearnet HTTP(S) + Nostr `wss://` reverse proxy | `cap_drop: ALL` + `NET_BIND_SERVICE`, `no-new-privileges`, healthcheck |
+| `tor` | `.onion` v3 hidden service | hidden-service keys persist in its own volume |
+| `i2pd` | `.i2p` eepsite | console bound to loopback only |
+| `nostr-relay` (strfry) | NIP-04/17 relay | `cap_drop: ALL`, no-new-privileges |
+| `yggdrasil` | IPv6 mesh overlay | `NET_ADMIN` only |
+| `radicle` | `rad://` seed | no-new-privileges, cap_drop |
+| `ipfs` | `ipfs://` gateway + pinning | API bound to loopback only |
+| `rnsd` | Reticulum / LXMF mesh | cap_drop, no-new-privileges |
+| `vpn-egress` (gluetun) | SOCKS5 `:8080` / HTTP proxy `:8888` for clearnet SMTP gateways | loopback-bound only, full tunnel in a dedicated container |
+
+`docker compose up -d` on `kernel`; per-service vertebrae are annotated in the
+file itself. The SMTP bridge (`tools/smtp-bridge.mjs`) chains its TCP leg through
+the `vpn-egress` SOCKS5 endpoint with `--via socks5://127.0.0.1:8080` so mail to
+Gmail/Outlook exits through the tunnel, never the host's real IP.
+
 ---
 
-## 5. Deployment Summary
+## 5b. Sending to Real Clearnet Mailboxes (Gmail / Outlook / Microsoft 365)
+
+The DOM Mail engine is network-free by design; "send" writes to the local Outbox
+and loops a copy to the Inbox. Egress to actual mailboxes is provided by the
+optional **SMTP bridge** daemon (see `README.md`):
+
+- `tools/smtp-bridge.mjs --server smtp.gmail.com:587 --mode starttls ...` with
+  an app password — validated by the loopback integration test
+  (`test/smtp.test.mjs`) that drives the engine's `smtpSubmit()` over real TCP
+  with `AUTH LOGIN` and RFC 5321 dot-stuffing.
+- `--validate` proves a given provider accepts your sender + credentials without
+  sending a letter.
+- The protocol logic lives in `core/mail.mjs#smtpSubmit`, so the browser and CLI
+  share it and the browser build still performs zero network I/O itself.
+
+---
+
+## 6. Per-Transport Cybersecurity & Anonymity Risk (single source of truth)
+
+Settings → Network (site) and `cli/domail.mjs network help` (CLI) ship the same
+per-vector disclosures. Summary:
+
+| Transport | Risk | Biggest anonymity danger | Recommended mitigation |
+| :--- | :--- | :--- | :--- |
+| Direct WWW (80/443 TLS) | **High** | Real IP to servers/ISPs/CDNs; envelope loggable | VPN gateway or Tor; keep PGP on |
+| Tor `.onion` | Low | Traffic correlation if clearnet is mixed | Circuit discipline; separate identities |
+| I2P `.i2p` | Low | Misconfigured router leaks IP | Firewall the router; verify tunnel leases |
+| ENS / IPFS | Medium | Gateway & RPC operators see IP/query patterns | Self-host IPFS on `kernel`; pin widely |
+| Radicle `rad://` | Low | Peer gossip exposes node identity | Run the seed behind Tor/Yggdrasil |
+| Yggdrasil mesh | Low | Peers observe overlay path | Add an anonymizing layer; rotate keys |
+| Nostr `wss://` | Medium | Relays see IP, timing, sizes | Self-host strfry; publish over Tor/VPN |
+| Reticulum / LXMF | Low | Radio direction-finding | Encrypt (LXMF/PGP); reduce power |
+| WebRTC P2P | Medium | ICE leaks local/public IPs | Force TURN-only ICE; in-band signalling |
+| BLE proximity | Medium | Address tracking over time | Rotate addresses; keep payload sealed |
+| DNS TXT tunnel | **High** | Resolvers log everything; DPI fingerprints | Trusted DoH/DoT; rate-limit queries |
+| USB/QR Sneakernet | Minimal | Physical theft / shoulder surfing | Verify fingerprints; destroy media |
+| Federation gateways | Medium | Servers retain metadata; alias linkage | Self-host bridge; compartmental identities |
+
+---
+
+## 7. Deployment Summary
 
 | Network Layer | Protocol / URI | Hosting Mechanism | Mail Transport Role |
 | :--- | :--- | :--- | :--- |
