@@ -92,7 +92,7 @@ Standard web browsers (Chrome, Firefox, Safari) enforce strict process sandboxin
 ### The Offline-First Sidecar / Companion Pattern
 To bridge an offline browser tab (cached via Service Worker) to Tor `.onion` networks, DOM Mail utilizes a **Local Companion Daemon Architecture**:
 1. **The Static Client Download**: The user visits DOM Mail once (over HTTPS, IPFS, or `.onion`) and caches the entire app bundle offline.
-2. **Local Loopback WebSocket (`ws://127.0.0.1:...`)**: DOM Mail attempts to connect to a local companion process running on the user's local machine or Tailscale node (e.g., spawned via `node cli/domail.mjs tor-bridge` or a tiny sidecar script).
+2. **Local Loopback WebSocket (`ws://127.0.0.1:...`)**: DOM Mail attempts to connect to a local companion process running on the user's local machine or Tailscale node (e.g., `node tools/smtp-bridge.mjs` for the SMTP/SOCKS5 sidecar, or a tiny custom sidecar script).
 3. **Tor SOCKS / Onion Bridge**: The companion daemon manages the actual Tor v3 Hidden Service connection and proxies binary mail frames over the local WebSocket, allowing the offline web tab to send and receive mail over Tor with zero clearnet leak.
 
 ---

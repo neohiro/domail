@@ -64,9 +64,13 @@ function parseArgs(argv) {
     else { console.error(`unknown arg: ${a}`); usage(); }
   }
   if (!o.server || !o.from || (!o.validate && !o.to.length)) usage();
-  const [host, port] = o.server.split(':');
+  // Accept host:port, [v6]:port, and bare host (default port by mode).
+  const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(o.server);
+  if (!m) { console.error(`bad --server: ${o.server}`); usage(); }
+  let host = m[1];
+  if (host.startsWith('[') && host.endsWith(']')) host = host.slice(1, -1);
   o.host = host;
-  o.port = Number(port || (o.mode === 'implicit' ? 465 : 587));
+  o.port = Number(m[2] || (o.mode === 'implicit' ? 465 : 587));
   return o;
 }
 

@@ -188,5 +188,51 @@ test('smtpSubmit surfaces a rejected greeting as an error', async () => {
     /554/,
   );
 
-  rejected.close();
+  await new Promise((resolve) => rejected.close(resolve));
+});
+
+test('smtpSubmit sees STARTTLS advertised across a multiline EHLO reply', async () => {
+  const tlsRelay = net.createServer((socket) => {
+    socket.write('220 tls-backend.esmtp ready\r\n');
+    let exchanges = 0;
+    socket.on('data', () => {
+      exchanges += 1;
+      if (exchanges === 1) {
+        // Capability list spans multiple "250-..." continuation lines; only
+        // the final "250 ..." line ends the reply.
+        socket.write('250-tls-backend.esmtp\r\n');
+        socket.write('250-PIPELINING\r\n');
+        socket.write('250-STARTTLS\r\n');
+        socket.write('250-AUTH PLAIN LOGIN\r\n');
+        socket.write('250 SIZE 10485760\r\n');
+      } else {
+        // Plaintext continuation after a STARTTLS advert is a protocol cut.
+        socket.write('550 Please issue STARTTLS first\r\n');
+      }
+    });
+  });
+  tlsRelay.listen(0, '127.0.0.1');
+  await new Promise((resolve) => tlsRelay.once('listening', resolve));
+  const port = tlsRelay.address().port;
+
+  await assert.rejects(
+    smtpSubmit(
+      {
+        host: '127.0.0.1',
+        port,
+        secure: false,
+        connect: (host, port) =>
+          new Promise((resolve, reject) => {
+            const s = net.connect(port, host);
+            s.once('connect', () => resolve(s));
+            s.once('error', reject);
+          }),
+      },
+      'Subject: test\r\n\r\nbody',
+      { from: 'a@b.c', rcpt: ['d@e.f'] },
+    ),
+    /relay demands STARTTLS/,
+  );
+
+  await new Promise((resolve) => tlsRelay.close(resolve));
 });

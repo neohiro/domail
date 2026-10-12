@@ -648,34 +648,70 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
   let socket = await open(cfg.host, cfg.port ?? (cfg.secure ? 465 : 587));
   let buf = '';
 
-  const waitFor = (want) =>
+  // Wait for one complete (possibly multiline) SMTP reply. ESMTP multiline
+  // replies use "250-..." for every line but the last ("250 ..."), so the
+  // capability list — including STARTTLS/AUTH — is only visible after the
+  // final line. Waiters must also detach every listener they attach, or a
+  // single transaction accumulates them and trips Node's MaxListeners guard.
+  const waitReply = () =>
     new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('smtp timeout')), timeout);
+      let settled = false;
+      const cleanup = () => {
+        clearTimeout(timer);
+        socket.removeListener('data', onData);
+        socket.removeListener('error', onError);
+        socket.removeListener('end', onEnd);
+      };
+      const finish = (fn, val) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        fn(val);
+      };
+      const fail = (err) => finish(reject, err);
+      const timer = setTimeout(() => fail(new Error('smtp timeout')), timeout);
+      const onError = (e) => fail(e);
+      const onEnd = () => fail(new Error('smtp connection closed by remote'));
+
       const onData = (chunk) => {
         buf += chunk;
-        const m = buf.match(/^(\d{3})(?:[ -])(.*)$/m);
-        if (m) {
-          clearTimeout(timer);
-          socket.removeListener('data', onData);
-          buf = '';
-          resolve({ code: Number(m[1]), text: m[2] });
+        // Split off complete CRLF-delimited lines; a dangling tail stays put.
+        const lines = buf.split(CRLF);
+        buf = lines.pop() ?? '';
+        if (!lines.length) return;
+        const head = /^(\d{3})([ -])/.exec(lines[0]);
+        if (!head) return;
+        const code = Number(head[1]);
+        let end;
+        if (head[2] === ' ') {
+          end = 1;
+        } else {
+          end = lines.findIndex((l, i) => i > 0 && /^\d{3} /.test(l));
+          if (end === -1) {
+            // Multiline reply not finished; keep every line for the next burst.
+            buf = `${lines.join(CRLF)}${CRLF}${buf}`;
+            return;
+          }
+          end += 1;
         }
+        const taken = lines.slice(0, end);
+        buf = `${lines.slice(end).join(CRLF)}${end < lines.length ? CRLF : ''}${buf}`;
+        finish(resolve, { code, text: taken.join('\n'), lines: taken });
       };
+
       socket.on('data', onData);
-      socket.on('error', (e) => {
-        clearTimeout(timer);
-        reject(e);
-      });
+      socket.on('error', onError);
+      socket.on('end', onEnd);
     });
 
   const send = (line) => {
     log(`> ${line}`);
     socket.write(`${line}${CRLF}`);
-    return waitFor(/^\d{3}[ -]/);
+    return waitReply();
   };
   const recv = () => {
-    log(`< ${buf.split(CRLF)[0]}`);
-    return waitFor(/^\d{3}[ -]/);
+    log('< <banner>');
+    return waitReply();
   };
 
   try {
@@ -689,9 +725,10 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
 
     if (cfg.secure && cfg.tls) socket = await cfg.tls(socket, { servername: cfg.host });
     if (cfg.user) {
+      const b64 = (s) => bytesToBase64(new TextEncoder().encode(s));
       await send('AUTH LOGIN');
-      await send(btoa(cfg.user));
-      await send(btoa(cfg.pass || ''));
+      await send(b64(cfg.user));
+      await send(b64(cfg.pass || ''));
     }
 
     await send(`MAIL FROM:<${envelope.from}>`);
@@ -702,7 +739,7 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
     log('> [message]');
     socket.write(toWire(message));
     socket.write(`.${CRLF}`);
-    const done = await waitFor(/^\d{3}[ -]/);
+    const done = await waitReply();
     if (done.code !== 250) throw new Error(`data rejected ${done.code}`);
     await send('QUIT');
     return { ok: true, code: done.code };

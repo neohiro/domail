@@ -125,6 +125,79 @@ function saveConfig(cfg) {
   writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
 }
 
+const netOn = (c, key) => (key === 'netDirect' ? c.netDirect !== false : !!c[key]);
+
+function printNetworkStatus(c) {
+  console.log('Multi-Network & Advanced Transports (13 Vectors):');
+  for (const [slug, t] of Object.entries(TRANSPORTS)) {
+    console.log(`  ${slug.padEnd(11)} ${netOn(c, t.key) ? 'ON ' : 'off'}  risk=${t.risk.padEnd(7)} ${t.label}`);
+  }
+  console.log('  Use: network <transport> [on|off|info]');
+}
+
+function printNetworkHelp() {
+  console.log('Transport cybersecurity & anonymity disclosures:');
+  for (const [slug, t] of Object.entries(TRANSPORTS)) {
+    console.log(`\n  ${slug} — ${t.label}  [risk: ${t.risk}]`);
+    console.log(`    strength: ${t.strength}`);
+    console.log(`    risk:     ${t.weakness}`);
+  }
+}
+
+function printTransportInfo(t, slug) {
+  console.log(`${t.label}  [risk: ${t.risk}]`);
+  console.log(`  strength: ${t.strength}`);
+  console.log(`  risk:     ${t.weakness}`);
+  console.log(`  Use: network ${slug} [on|off|info]`);
+}
+
+/** Shared by interactive and one-shot mode so the two never drift. */
+function networkCommand(c, net, val) {
+  if (!net || net === 'status') return printNetworkStatus(c);
+  if (net === 'help') return printNetworkHelp();
+  const t = TRANSPORTS[net.toLowerCase()];
+  if (!t) {
+    console.log(`Unknown network transport: ${net}. Valid: ${Object.keys(TRANSPORTS).join(', ')}`);
+    return;
+  }
+  if (val === 'on' || val === 'off') {
+    c[t.key] = val === 'on';
+    saveConfig(c);
+    console.log(`${net} transport is now ${val.toUpperCase()} (risk: ${t.risk}).`);
+    if (val === 'on') console.log(`  WARNING: ${t.weakness}`);
+  } else if (val === 'info') {
+    printTransportInfo(t, net);
+  } else {
+    console.log(`${net} transport is currently ${netOn(c, t.key) ? 'ON' : 'off'} (risk: ${t.risk}). Use: network ${net} [on|off|info]`);
+  }
+}
+
+/** Shared by interactive and one-shot mode so the two never drift. */
+function vpnCommand(c, val, endpoint) {
+  if (!val || val === 'status') {
+    console.log(`VPN gateway is ${c.vpnEnabled ? 'ON' : 'off'}${c.vpnEndpoint ? ` (${c.vpnEndpoint})` : ''}.`);
+    console.log('  Use: vpn on | vpn off | vpn set <socks5://host:port | http://host:port>');
+    if (c.vpnEnabled) {
+      console.log('  WARNING: the VPN provider still sees your connection endpoint (not E2EE contents).');
+    }
+    return;
+  }
+  if (val === 'on' || val === 'off') {
+    c.vpnEnabled = val === 'on';
+    saveConfig(c);
+    console.log(`VPN gateway is now ${c.vpnEnabled ? 'ON' : 'off'}.`);
+    return;
+  }
+  if (val === 'set') {
+    if (!endpoint) { console.log('Usage: vpn set <socks5://host:port | http://host:port>'); return; }
+    c.vpnEndpoint = endpoint;
+    saveConfig(c);
+    console.log(`VPN endpoint set to ${endpoint}`);
+    return;
+  }
+  console.log('Usage: vpn [on|off|set <endpoint>|status]');
+}
+
 function printDisclosure(title, lines) {
   console.log();
   console.log(`  ${title}`);
@@ -302,73 +375,11 @@ async function interactive(engine) {
   }
 
   async function doNetwork(net, val) {
-    cfgCache = loadConfig();
-    const c = cfgCache;
-    const validNets = Object.keys(TRANSPORTS);
-    if (!net || net === 'status') {
-      console.log('Multi-Network & Advanced Transports (13 Vectors):');
-      for (const [slug, t] of Object.entries(TRANSPORTS)) {
-        const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
-        console.log(`  ${slug.padEnd(11)} ${on ? 'ON ' : 'off'}  risk=${t.risk.padEnd(7)} ${t.label}`);
-      }
-      console.log('  Use: network <transport> [on|off|info]');
-      return;
-    }
-    if (net === 'help') {
-      console.log('Transport cybersecurity & anonymity disclosures:');
-      for (const [slug, t] of Object.entries(TRANSPORTS)) {
-        console.log(`\n  ${slug} — ${t.label}  [risk: ${t.risk}]`);
-        console.log(`    strength: ${t.strength}`);
-        console.log(`    risk:     ${t.weakness}`);
-      }
-      return;
-    }
-    const t = TRANSPORTS[net.toLowerCase()];
-    if (!t) {
-      console.log(`Unknown network transport: ${net}. Valid: ${validNets.join(', ')}`);
-      return;
-    }
-    if (val === 'on' || val === 'off') {
-      c[t.key] = val === 'on';
-      saveConfig(c);
-      console.log(`${net} transport is now ${val.toUpperCase()} (risk: ${t.risk}).`);
-      if (val === 'on') console.log(`  WARNING: ${t.weakness}`);
-    } else if (val === 'info') {
-      console.log(`${t.label}  [risk: ${t.risk}]`);
-      console.log(`  strength: ${t.strength}`);
-      console.log(`  risk:     ${t.weakness}`);
-    } else {
-      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
-      console.log(`${net} transport is currently ${on ? 'ON' : 'off'} (risk: ${t.risk}). Use: network ${net} [on|off|info]`);
-    }
+    networkCommand(config(), net, val);
   }
 
   async function doVpn(val, endpoint) {
-    cfgCache = loadConfig();
-    const c = cfgCache;
-    if (!val || val === 'status') {
-      console.log(`VPN gateway is ${c.vpnEnabled ? 'ON' : 'off'}${c.vpnEndpoint ? ` (${c.vpnEndpoint})` : ''}.`);
-      console.log('  Use: vpn on | vpn off | vpn set <socks5://host:port>');
-      if (c.vpnEnabled) {
-        console.log('  WARNING: public clearnet mail egresses via the proxy IP.');
-        console.log('  WARNING: the VPN provider still sees your connection endpoint (not E2EE contents).');
-      }
-      return;
-    }
-    if (val === 'on' || val === 'off') {
-      c.vpnEnabled = val === 'on';
-      saveConfig(c);
-      console.log(`VPN gateway is now ${c.vpnEnabled ? 'ON' : 'off'}.`);
-      return;
-    }
-    if (val === 'set') {
-      if (!endpoint) { console.log('Usage: vpn set <socks5://host:port | http://host:port>'); return; }
-      c.vpnEndpoint = endpoint;
-      saveConfig(c);
-      console.log(`VPN endpoint set to ${endpoint}`);
-      return;
-    }
-    console.log('Usage: vpn [on|off|set <endpoint>|status]');
+    vpnCommand(config(), val, endpoint);
   }
 
   while (true) {
@@ -418,21 +429,6 @@ showMessage(engine, id);
       } else {
         console.log('Usage: mask [on|off|status]');
       }
-} else if (cmd === 'mask') {
-  const c = loadConfig();
-  const arg = args[0];
-  if (!arg || arg === 'status') {
-    console.log(`Address masking is ${c.mask ? 'ON' : 'off'}.`);
-    if (!c.mask) console.log('  Turn on with: mask on');
-  } else if (arg === 'on' || arg === 'off') {
-    c.mask = arg === 'on';
-    saveConfig(c);
-    cfgCache = null;
-    console.log(`Address masking is now ${c.mask ? 'ON' : 'off'}.`);
-  } else {
-    console.error('Usage: node cli/domail.mjs mask [on|off|status]');
-    process.exit(1);
-  }
     } else if (cmd === 'pgp') {
       await doPgp(args[0]);
     } else if (cmd === 'relay') {
@@ -565,65 +561,9 @@ if (!cmd || cmd === 'interactive') {
     console.log(`Relay URL set to ${arg}`);
   }
 } else if (cmd === 'network') {
-  const c = loadConfig();
-  cfgCache = c;
-  const validNets = Object.keys(TRANSPORTS);
-  const net = args[0];
-  const val = args[1];
-  if (!net || net === 'status') {
-    console.log('Multi-Network & Advanced Transports (13 Vectors):');
-    for (const [slug, t] of Object.entries(TRANSPORTS)) {
-      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
-      console.log(`  ${slug.padEnd(11)} ${on ? 'ON ' : 'off'}  risk=${t.risk.padEnd(7)} ${t.label}`);
-    }
-    console.log('  Use: node cli/domail.mjs network <transport> [on|off|info]');
-  } else if (net === 'help') {
-    console.log('Transport cybersecurity & anonymity disclosures:');
-    for (const [slug, t] of Object.entries(TRANSPORTS)) {
-      console.log(`\n  ${slug} — ${t.label}  [risk: ${t.risk}]`);
-      console.log(`    strength: ${t.strength}`);
-      console.log(`    risk:     ${t.weakness}`);
-    }
-  } else {
-    const t = TRANSPORTS[net.toLowerCase()];
-    if (!t) { console.log(`Unknown network transport: ${net}. Valid: ${validNets.join(', ')}`); process.exit(1); }
-    if (val === 'on' || val === 'off') {
-      c[t.key] = val === 'on';
-      saveConfig(c);
-      console.log(`${net} transport is now ${val.toUpperCase()} (risk: ${t.risk}).`);
-      if (val === 'on') console.log(`  WARNING: ${t.weakness}`);
-    } else if (val === 'info') {
-      console.log(`${t.label}  [risk: ${t.risk}]`);
-      console.log(`  strength: ${t.strength}`);
-      console.log(`  risk:     ${t.weakness}`);
-    } else {
-      const on = t.key === 'netDirect' ? c.netDirect !== false : !!c[t.key];
-      console.log(`${net} transport is currently ${on ? 'ON' : 'off'} (risk: ${t.risk}). Use: network ${net} [on|off|info]`);
-    }
-  }
+  networkCommand(loadConfig(), args[0], args[1]);
 } else if (cmd === 'vpn') {
-  const c = loadConfig();
-  const val = args[0];
-  const endpoint = args[1];
-  if (!val || val === 'status') {
-    console.log(`VPN gateway is ${c.vpnEnabled ? 'ON' : 'off'}${c.vpnEndpoint ? ` (${c.vpnEndpoint})` : ''}.`);
-    console.log('  Use: vpn on | vpn off | vpn set <socks5://host:port>');
-    if (c.vpnEnabled) {
-      console.log('  WARNING: the VPN provider still sees your connection endpoint (not E2EE contents).');
-    }
-  } else if (val === 'on' || val === 'off') {
-    c.vpnEnabled = val === 'on';
-    saveConfig(c);
-    console.log(`VPN gateway is now ${c.vpnEnabled ? 'ON' : 'off'}.`);
-  } else if (val === 'set') {
-    if (!endpoint) { console.log('Usage: vpn set <socks5://host:port | http://host:port>'); process.exit(1); }
-    c.vpnEndpoint = endpoint;
-    saveConfig(c);
-    console.log(`VPN endpoint set to ${endpoint}`);
-  } else {
-    console.error('Usage: node cli/domail.mjs vpn [on|off|set <endpoint>|status]');
-    process.exit(1);
-  }
+  vpnCommand(loadConfig(), args[0], args[1]);
 } else {
   console.log('Usage: domail [inbox|outbox|read <id>|compose|wipe|mask|pgp|relay|network|vpn|help|interactive]');
 }
