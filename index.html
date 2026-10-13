@@ -570,6 +570,92 @@
           </p>
         </div>
       </section>
+
+      <!-- ---------- SMTP Relay (External Email Delivery) ---------- -->
+      <section class="opt" id="optSmtpRelay" aria-labelledby="optSmtpRelayTitle" style="margin-top: 1.5rem;">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optSmtpRelayTitle">SMTP Relay — Send to External Email</h3>
+          <label class="switch">
+            <input id="setSmtpRelay" type="checkbox" aria-describedby="smtpRelayWarn">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label" id="smtpRelayState">Off</span>
+          </label>
+        </header>
+        <p class="minor">
+          Connect to a DOM Mail relay server that bridges WebSocket to SMTP, enabling delivery to any email address (Gmail, Outlook, Proton, etc.). The relay handles SMTP authentication and delivery; this client only sends encrypted WebSocket frames.
+        </p>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>Relay WebSocket URL</span>
+          <input id="setSmtpRelayUrl" type="url" inputmode="url" spellcheck="false"
+                 placeholder="wss://relay.example.com/relay" autocomplete="off"
+                 disabled aria-describedby="smtpRelayUrlHelp">
+          <small class="minor" id="smtpRelayUrlHelp">
+            <code>wss://</code> required. The relay must speak the DOMP/1 protocol with SMTP bridge support.
+          </small>
+        </div>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>SMTP Host (configured on relay)</span>
+          <input id="setSmtpRelayHost" type="text" inputmode="text" spellcheck="false"
+                 placeholder="smtp.gmail.com" autocomplete="off"
+                 disabled aria-describedby="smtpRelayHostHelp">
+          <small class="minor" id="smtpRelayHostHelp">
+            The SMTP server the relay will connect to. Configured on the relay server.
+          </small>
+        </div>
+        <div class="row" style="margin-top: 0.75rem; gap: 1rem; flex-wrap: wrap;">
+          <div class="field" style="flex: 1; min-width: 120px;">
+            <span>SMTP Port</span>
+            <input id="setSmtpRelayPort" type="number" min="1" max="65535" value="587"
+                   disabled aria-describedby="smtpRelayPortHelp">
+            <small class="minor" id="smtpRelayPortHelp">Usually 587 (STARTTLS) or 465 (implicit TLS)</small>
+          </div>
+          <div class="field" style="flex: 1; min-width: 120px;">
+            <span>Security</span>
+            <select id="setSmtpRelaySecure" disabled aria-describedby="smtpRelaySecureHelp">
+              <option value="starttls">STARTTLS (port 587)</option>
+              <option value="implicit">Implicit TLS (port 465)</option>
+              <option value="plain">Plaintext (port 25, not recommended)</option>
+            </select>
+            <small class="minor" id="smtpRelaySecureHelp">TLS mode for the SMTP connection</small>
+          </div>
+        </div>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>SMTP Username</span>
+          <input id="setSmtpRelayUser" type="text" inputmode="text" spellcheck="false"
+                 placeholder="your@email.com" autocomplete="off"
+                 disabled aria-describedby="smtpRelayUserHelp">
+          <small class="minor" id="smtpRelayUserHelp">SMTP authentication username (often your email address)</small>
+        </div>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>SMTP Password / App Password</span>
+          <input id="setSmtpRelayPass" type="password" autocomplete="off" spellcheck="false"
+                 placeholder="App password (never stored)" disabled
+                 aria-describedby="smtpRelayPassHelp">
+          <small class="minor" id="smtpRelayPassHelp">
+            Kept in memory for this session only — never written to storage.
+          </small>
+        </div>
+        <div class="row" style="margin-top: 0.75rem;">
+          <button id="smtpRelayConnectBtn" class="pill" type="button" disabled>Connect relay</button>
+          <button id="smtpRelayDisconnectBtn" class="pill" type="button" disabled>Disconnect</button>
+          <button id="smtpRelayTestBtn" class="pill" type="button" disabled>Test connection</button>
+          <span id="smtpRelayStatus" class="pill pill--quiet" role="status" aria-live="polite">disabled</span>
+        </div>
+        <div class="warn warn--danger" id="smtpRelayWarn" role="note">
+          <span class="warn-tag">Exposes metadata</span>
+          <p>Enabling an SMTP relay gives up part of DOM Mail's privacy. Understand the trade-offs:</p>
+          <ul>
+            <li><strong>Your IP address and online times become visible to the relay operator.</strong> Use Tor/VPN if this matters.</li>
+            <li><strong>The relay operator can see all envelope metadata:</strong> From, To, Cc, Subject, Date, message size — even if PGP encrypts the body.</li>
+            <li><strong>SMTP credentials (username/password) are sent to the relay</strong> for authentication. Only use a relay you trust, and prefer app-specific passwords.</li>
+            <li><strong>A malicious relay can drop, replay, reorder or censor messages.</strong> No delivery guarantee.</li>
+            <li><strong>DOM Mail stops being purely local</strong> when this is on.</li>
+          </ul>
+          <p class="warn-detail">
+            This feature requires a DOM Mail relay server with SMTP bridge enabled. Run your own relay or use one you trust.
+          </p>
+        </div>
+      </section>
     </div>
 
     <div class="subpage" data-sub="data" hidden>

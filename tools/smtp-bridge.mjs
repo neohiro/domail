@@ -37,13 +37,32 @@ DOM Mail SMTP bridge
   --from       envelope + header sender
   --to         recipient(s), comma-separated
   --subject    subject line
-  --body       text body (or --body-file path / read stdin)
+  --body       text body; "-" reads piped stdin (or --body-file path)
   --via        SOCKS5 hop, e.g. socks5://127.0.0.1:8080 (kernel vpn-egress)
   --validate   run greeting+auth only, never send
   --debug      print SMTP transcript
   env SMTP_USER / SMTP_PASS for AUTH LOGIN
   `);
   process.exit(1);
+}
+
+/** Read whatever is piped on stdin (for --body -). */
+function readStdin(maxBytes = 10 * 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    let data = '';
+    let bytes = 0;
+    process.stdin.setEncoding('utf8');
+    process.stdin.on('data', (chunk) => {
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > maxBytes) {
+        reject(new Error(`stdin exceeds ${maxBytes} byte limit`));
+        return;
+      }
+      data += chunk;
+    });
+    process.stdin.on('error', reject);
+    process.stdin.on('end', () => resolve(data));
+  });
 }
 
 function parseArgs(argv) {
@@ -55,8 +74,8 @@ function parseArgs(argv) {
     else if (a === '--mode') o.mode = val();
     else if (a === '--from') o.from = val();
     else if (a === '--to') o.to.push(val());
-    else if (a === '--subject') o.subject = val();
-    else if (a === '--body') o.body = val();
+    else if (a === '--subject') o.subject = argv[i + 1]?.startsWith('--') ? '' : val();
+    else if (a === '--body') o.body = argv[i + 1]?.startsWith('--') ? '' : val();
     else if (a === '--body-file') o.body = readFileSync(val(), 'utf8');
     else if (a === '--via') o.via = val();
     else if (a === '--validate') o.validate = true;
@@ -64,6 +83,14 @@ function parseArgs(argv) {
     else { console.error(`unknown arg: ${a}`); usage(); }
   }
   if (!o.server || !o.from || (!o.validate && !o.to.length)) usage();
+  if (!['starttls', 'implicit', 'plain'].includes(o.mode)) {
+    console.error(`bad --mode: ${o.mode} (starttls|implicit|plain)`);
+    usage();
+  }
+  if (o.via && !/^socks5h?:/.test(o.via)) {
+    console.error(`bad --via: ${o.via} (use socks5:// or socks5h://)`);
+    usage();
+  }
   // Accept host:port, [v6]:port, and bare host (default port by mode).
   const m = /^(\[[^\]]+\]|[^:]+)(?::(\d+))?$/.exec(o.server);
   if (!m) { console.error(`bad --server: ${o.server}`); usage(); }
@@ -75,12 +102,27 @@ function parseArgs(argv) {
 }
 
 /** Minimal SOCKS5 CONNECT (RFC 1928) over a fresh TCP socket. */
-function socks5Connect(proxy, targetHost, targetPort) {
+function socks5Connect(proxy, targetHost, targetPort, timeoutMs = 15000) {
   return new Promise((resolve, reject) => {
     const u = new URL(proxy);
     const sock = net.connect(Number(u.port || 1080), u.hostname);
     sock.setNoDelay(true);
-    sock.once('error', reject);
+    let settled = false;
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      sock.removeListener('data', onData);
+      sock.destroy();
+      reject(err);
+    };
+    const timer = setTimeout(
+      () => fail(new Error(`SOCKS5 ${u.hostname}:${u.port || 1080} timed out`)),
+      timeoutMs,
+    );
+    sock.once('error', (e) => fail(e));
+    sock.once('end', () => fail(new Error('SOCKS5 connection closed prematurely')));
+    sock.once('close', () => fail(new Error('SOCKS5 connection closed prematurely')));
     sock.once('connect', () => sock.write(Buffer.from([0x05, 0x01, 0x00])));
     let stage = 0;
     let buf = Buffer.alloc(0);
@@ -92,8 +134,7 @@ function socks5Connect(proxy, targetHost, targetPort) {
         const method = buf[1];
         buf = buf.subarray(2);
         if (ver !== 5 || method !== 0) {
-          sock.destroy();
-          reject(new Error(`SOCKS5 auth negotiation failed (ver ${ver}, method ${method})`));
+          fail(new Error(`SOCKS5 auth negotiation failed (ver ${ver}, method ${method})`));
           return;
         }
         stage = 1;
@@ -107,17 +148,25 @@ function socks5Connect(proxy, targetHost, targetPort) {
         if (buf.length < 4) return;
         const rep = buf[1];
         if (rep !== 0) {
-          sock.destroy();
-          reject(new Error(`SOCKS5 CONNECT failed, rep=0x${rep.toString(16)} (1=general, 2=not allowed, 4=host unreachable)`));
+          fail(new Error(`SOCKS5 CONNECT failed, rep=0x${rep.toString(16)} (1=general, 2=not allowed, 4=host unreachable)`));
           return;
         }
         let addrLen;
         if (buf[3] === 1) addrLen = 4;
         else if (buf[3] === 4) addrLen = 16;
-        else if (buf[3] === 3) addrLen = 1 + buf[4];
-        else { sock.destroy(); reject(new Error(`SOCKS5 bad atyp 0x${buf[3].toString(16)}`)); return; }
+        else if (buf[3] === 3) {
+          // Domain length byte must be present before we can size the reply.
+          if (buf.length < 5) return;
+          addrLen = 1 + buf[4];
+        } else {
+          fail(new Error(`SOCKS5 bad atyp 0x${buf[3].toString(16)}`));
+          return;
+        }
         const headerEnd = 4 + addrLen + 2;
-        if (buf.length < headerEnd) return;
+        if (!Number.isFinite(headerEnd) || buf.length < headerEnd) return;
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
         sock.removeListener('data', onData);
         sock.setKeepAlive(true);
         resolve(sock);
@@ -128,15 +177,25 @@ function socks5Connect(proxy, targetHost, targetPort) {
 }
 
 /** Plain or SOCKS5-tunneled TCP leg; implicit TLS (465) wrapped in connect. */
-async function openSocket(o, host, port) {
+async function openSocket(o, host, port, timeoutMs = 15000) {
   let sock;
-  if (o.via) sock = await socks5Connect(o.via, host, port);
+  if (o.via) sock = await socks5Connect(o.via, host, port, timeoutMs);
   else {
     sock = await new Promise((resolve, reject) => {
       const s = net.connect(port, host);
       s.setNoDelay(true);
-      s.once('connect', () => resolve(s));
-      s.once('error', reject);
+      const timer = setTimeout(() => {
+        s.destroy();
+        reject(new Error(`connection to ${host}:${port} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      s.once('connect', () => {
+        clearTimeout(timer);
+        resolve(s);
+      });
+      s.once('error', (e) => {
+        clearTimeout(timer);
+        reject(e);
+      });
     });
   }
   sock.setMaxListeners(0);
@@ -190,17 +249,23 @@ class SmtpSession {
   }
   async reply() {
     // A reply may span multiple 250- lines; collect until a final <code><sp>.
+    // Protect against infinite loops on malformed server responses.
+    const MAX_LINES = 100;
     let code = 0;
     let lines = [];
-    for (;;) {
+    for (let i = 0; i < MAX_LINES; i++) {
       const line = await this._waitLine();
       lines.push(line);
       const m = line.match(/^(\d{3})([ -])(.*)$/);
-      if (!m) continue;
+      if (!m) {
+        // Malformed line - treat as protocol error to avoid infinite loop
+        throw new Error(`malformed SMTP reply line: ${line}`);
+      }
       code = Number(m[1]);
       if (m[2] === ' ') return { code, lines };
       if (code >= 500 && code < 600) return { code, lines }; // hard errors finalize
     }
+    throw new Error('SMTP reply exceeded maximum line count');
   }
   async send(cmd) {
     this.log(`> ${cmd}`);
@@ -218,7 +283,7 @@ async function validateRelay(o) {
   const pass = process.env.SMTP_PASS || '';
   const log = (l) => { if (o.debug) console.error(l); };
 
-  let sock = await openSocket(o, o.host, o.port);
+  let sock = await openSocket(o, o.host, o.port, 15000);
   let s = new SmtpSession(sock, log);
 
   let r = await s.reply();
@@ -257,7 +322,7 @@ async function validateRelay(o) {
   r = await s.send(`MAIL FROM:<${o.from}>`);
   if (r.code !== 250) throw new Error(`sender rejected ${r.code}: ${r.lines[0]}`);
   console.log('OK  MAIL FROM accepted');
-  s.send('QUIT').catch(() => {});
+  await s.send('QUIT');
   s.close();
   console.log('VALIDATED: this relay accepts a message from this sender now.');
   return true;
@@ -284,14 +349,14 @@ async function main() {
     from: { address: o.from },
     to: recipients.map((address) => ({ address })),
     subject: o.subject || '',
-    text: o.body ?? '',
+    text: o.body === '-' ? await readStdin() : o.body ?? '',
   });
 
   const cfg = {
     host: o.host,
     port: o.port,
     secure: o.mode !== 'plain',
-    connect: (host, port) => openSocket(o, host, port),
+    connect: (host, port) => openSocket(o, host, port, 15000),
     ...(o.mode === 'starttls'
       ? { tls: (socket, _opts) => starttlsUpgrade(socket, o.host) }
       : {}),

@@ -194,6 +194,14 @@ let uiPrefs = {
   vpnEndpoint: '',
   vpnConfigName: '',
   vpnConfigBody: '',
+  // SMTP relay (for sending to external email addresses via WebSocket relay)
+  smtpRelayEnabled: false,
+  smtpRelayUrl: '',
+  smtpRelayHost: '',
+  smtpRelayPort: 587,
+  smtpRelaySecure: false,
+  smtpRelayUser: '',
+  smtpRelayPass: '',
 };
 
 const $ = (s) => document.querySelector(s);
@@ -310,6 +318,20 @@ setPgp: $('#setPgp'),
   setVpnEndpoint: $('#setVpnEndpoint'),
   setVpnFile: $('#setVpnFile'),
   vpnFileStatus: $('#vpnFileStatus'),
+  // SMTP Relay elements
+  setSmtpRelay: $('#setSmtpRelay'),
+  smtpRelayState: $('#smtpRelayState'),
+  setSmtpRelayUrl: $('#setSmtpRelayUrl'),
+  setSmtpRelayHost: $('#setSmtpRelayHost'),
+  setSmtpRelayPort: $('#setSmtpRelayPort'),
+  setSmtpRelaySecure: $('#setSmtpRelaySecure'),
+  setSmtpRelayUser: $('#setSmtpRelayUser'),
+  setSmtpRelayPass: $('#setSmtpRelayPass'),
+  smtpRelayConnectBtn: $('#smtpRelayConnectBtn'),
+  smtpRelayDisconnectBtn: $('#smtpRelayDisconnectBtn'),
+  smtpRelayTestBtn: $('#smtpRelayTestBtn'),
+  smtpRelayStatus: $('#smtpRelayStatus'),
+  optSmtpRelay: $('#optSmtpRelay'),
 };
 
 /*
@@ -848,6 +870,30 @@ if (el.setRelay) {
     if (live !== 'connected' && live !== 'connecting') el.relayConnectBtn.disabled = false;
   }
 
+  // SMTP Relay (External Email Delivery)
+  if (el.setSmtpRelay) {
+    el.setSmtpRelay.checked = uiPrefs.smtpRelayEnabled;
+    if (el.smtpRelayState) el.smtpRelayState.textContent = uiPrefs.smtpRelayEnabled ? 'On' : 'Off';
+    const smtpLive = smtpRelay?.status || 'disabled';
+    const smtpSec = document.getElementById('optSmtpRelay');
+    if (smtpSec) smtpSec.classList.toggle('is-on', !!uiPrefs.smtpRelayEnabled);
+    el.setSmtpRelayUrl.value = uiPrefs.smtpRelayUrl || '';
+    el.setSmtpRelayUrl.disabled = !uiPrefs.smtpRelayEnabled;
+    el.setSmtpRelayHost.value = uiPrefs.smtpRelayHost || '';
+    el.setSmtpRelayHost.disabled = !uiPrefs.smtpRelayEnabled;
+    el.setSmtpRelayPort.value = uiPrefs.smtpRelayPort || 587;
+    el.setSmtpRelayPort.disabled = !uiPrefs.smtpRelayEnabled;
+    el.setSmtpRelaySecure.value = uiPrefs.smtpRelaySecure || 'starttls';
+    el.setSmtpRelaySecure.disabled = !uiPrefs.smtpRelayEnabled;
+    el.setSmtpRelayUser.value = uiPrefs.smtpRelayUser || '';
+    el.setSmtpRelayUser.disabled = !uiPrefs.smtpRelayEnabled;
+    el.setSmtpRelayPass.value = ''; // Never restore password
+    el.setSmtpRelayPass.disabled = !uiPrefs.smtpRelayEnabled;
+    el.smtpRelayConnectBtn.disabled = !uiPrefs.smtpRelayEnabled || smtpLive === 'connected' || smtpLive === 'connecting';
+    el.smtpRelayDisconnectBtn.disabled = !uiPrefs.smtpRelayEnabled || smtpLive === 'disabled';
+    el.smtpRelayTestBtn.disabled = smtpLive !== 'connected';
+  }
+
   // GnuPG settings
   if (el.setGpg) {
     el.setGpg.checked = uiPrefs.gpgEnabled;
@@ -1027,10 +1073,120 @@ el.setPgpSign.addEventListener('change', () => {
       }
     });
 
-    el.relayDisconnectBtn.addEventListener('click', () => {
+el.relayDisconnectBtn.addEventListener('click', () => {
       relay?.disconnect('stopped by you');
       paintOptionalPrefs();
       toast('Relay disconnected');
+    });
+  }
+
+  // SMTP Relay (external email delivery)
+  if (el.setSmtpRelay) {
+    el.setSmtpRelay.addEventListener('change', () => {
+      uiPrefs.smtpRelayEnabled = el.setSmtpRelay.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      if (!uiPrefs.smtpRelayEnabled) {
+        smtpRelay?.shutdown?.();
+        smtpRelay = null;
+        // Clear password from memory
+        uiPrefs.smtpRelayPass = '';
+        if (el.setSmtpRelayPass) el.setSmtpRelayPass.value = '';
+        paintSmtpRelayStatus('disabled');
+        toast('SMTP relay off — external delivery disabled');
+      } else {
+        const useOwn = confirm(
+          'External Email Delivery Notice:\n\n' +
+          'Using an online external relay shares delivery metadata with that operator.\n' +
+          'We strongly recommend running your own local MX node for complete privacy.\n\n' +
+          'Click OK to view instructions for running your own local MX node (Docker / smtp-bridge.mjs), or Cancel to use Nostr decentralized relay discovery.'
+        );
+        if (useOwn) {
+          alert(
+            'How to run your own local MX node:\n\n' +
+            '1. Run with Docker Compose: docker compose up (sets up inbound MX + WebSocket bridge)\n' +
+            '2. Or run the CLI bridge: node tools/smtp-bridge.mjs --server smtp.yourprovider.com --from you@domain.com\n\n' +
+            'SMTP relay remains disabled while you set up your private node.'
+          );
+          uiPrefs.smtpRelayEnabled = false;
+          el.setSmtpRelay.checked = false;
+          saveUiPrefs();
+          paintOptionalPrefs();
+          return;
+        } else {
+          toast('Using Nostr decentralized relay discovery for SMTP bridging...');
+        }
+        syncSmtpRelay();
+        toast('SMTP relay enabled — configure and connect');
+      }
+    });
+
+    el.setSmtpRelayUrl.addEventListener('change', () => {
+      uiPrefs.smtpRelayUrl = el.setSmtpRelayUrl.value.trim();
+      saveUiPrefs();
+      if (smtpRelay) smtpRelay.url = uiPrefs.smtpRelayUrl;
+      if (uiPrefs.smtpRelayEnabled) syncSmtpRelay();
+    });
+
+    el.setSmtpRelayHost.addEventListener('change', () => {
+      uiPrefs.smtpRelayHost = el.setSmtpRelayHost.value.trim();
+      saveUiPrefs();
+    });
+    el.setSmtpRelayPort.addEventListener('change', () => {
+      uiPrefs.smtpRelayPort = parseInt(el.setSmtpRelayPort.value) || 587;
+      saveUiPrefs();
+    });
+    el.setSmtpRelaySecure.addEventListener('change', () => {
+      uiPrefs.smtpRelaySecure = el.setSmtpRelaySecure.value;
+      saveUiPrefs();
+    });
+    el.setSmtpRelayUser.addEventListener('change', () => {
+      uiPrefs.smtpRelayUser = el.setSmtpRelayUser.value.trim();
+      saveUiPrefs();
+    });
+    el.setSmtpRelayPass.addEventListener('change', () => {
+      // Password only kept in memory, not saved to localStorage
+      uiPrefs.smtpRelayPass = el.setSmtpRelayPass.value;
+    });
+
+    el.smtpRelayConnectBtn.addEventListener('click', () => {
+      uiPrefs.smtpRelayUrl = el.setSmtpRelayUrl.value.trim();
+      uiPrefs.smtpRelayEnabled = true;
+      saveUiPrefs();
+      el.setSmtpRelay.checked = true;
+      paintOptionalPrefs();
+      syncSmtpRelay();
+      if (!smtpRelay?.connect()) {
+        toast('SMTP relay could not start — check the URL');
+      }
+    });
+
+    el.smtpRelayDisconnectBtn.addEventListener('click', () => {
+      smtpRelay?.disconnect?.('stopped by you');
+      // Clear password from memory
+      uiPrefs.smtpRelayPass = '';
+      el.setSmtpRelayPass.value = '';
+      paintOptionalPrefs();
+      toast('SMTP relay disconnected');
+    });
+
+    el.smtpRelayTestBtn.addEventListener('click', async () => {
+      if (!smtpRelay || smtpRelay.status !== 'connected') {
+        toast('SMTP relay not connected');
+        return;
+      }
+      // Send a test config frame to verify SMTP credentials
+      const testConfig = buildSmtpRelayConfig();
+      if (!testConfig) {
+        toast('Incomplete SMTP configuration');
+        return;
+      }
+      try {
+        smtpRelay.socket?.send(JSON.stringify({ type: 'config', config: testConfig }));
+        toast('Test config sent to relay');
+      } catch (e) {
+        toast(`Test failed: ${e.message}`);
+      }
     });
   }
 }
@@ -1502,14 +1658,113 @@ async function ingestRelayMail(frame) {
 
 /** Push a sent message to the relay, if enabled. Never blocks the send path. */
 function publishToRelay(record) {
-  if (!uiPrefs.relay || !relay || !record?.raw) return;
-  const res = relay.publish({
-    subject: record.subject || '',
-    from: record.from?.[0]?.address || null,
-    to: (record.to || []).map((a) => a.address),
-    raw: record.raw,
-  });
-  if (res.queued) toast(`Relay offline — ${res.depth} message(s) queued`);
+  if (!record?.raw) return;
+  // WebSocket relay (for domail-to-domail)
+  if (uiPrefs.relay && relay) {
+    const res = relay.publish({
+      subject: record.subject || '',
+      from: record.from?.[0]?.address || null,
+      to: (record.to || []).map((a) => a.address),
+      raw: record.raw,
+    });
+    if (res.queued) toast(`Relay offline — ${res.depth} message(s) queued`);
+  }
+  // SMTP relay (for external email delivery)
+  if (uiPrefs.smtpRelayEnabled && smtpRelay) {
+    const res = smtpRelay.publish({
+      subject: record.subject || '',
+      from: record.from?.[0]?.address || null,
+      to: [
+        ...(record.to || []).map((a) => a.address),
+        ...(record.cc || []).map((a) => a.address),
+        ...(record.bcc || []).map((a) => a.address),
+      ],
+      raw: record.raw,
+    });
+    if (res.queued) toast(`SMTP relay offline — ${res.depth} message(s) queued`);
+  }
+}
+
+/* -------------------- SMTP Relay (External Email) -------------------- */
+
+let smtpRelay = null;
+
+/** Build SMTP relay config from current prefs. */
+function buildSmtpRelayConfig() {
+  if (!uiPrefs.smtpRelayEnabled) return null;
+  if (!uiPrefs.smtpRelayUrl) return null;
+  if (!uiPrefs.smtpRelayHost) return null;
+  if (!uiPrefs.smtpRelayUser) return null;
+  if (!uiPrefs.smtpRelayPass) return null;
+  const port = Number(uiPrefs.smtpRelayPort);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  return {
+    smtp: {
+      host: uiPrefs.smtpRelayHost,
+      port,
+      secure: uiPrefs.smtpRelaySecure === 'implicit',
+      starttls: uiPrefs.smtpRelaySecure === 'starttls',
+      user: uiPrefs.smtpRelayUser,
+      pass: uiPrefs.smtpRelayPass,
+    },
+  };
+}
+
+/** Build (or tear down) the SMTP relay client. */
+function syncSmtpRelay() {
+  if (!uiPrefs.smtpRelayEnabled) {
+    if (smtpRelay) {
+      smtpRelay.shutdown?.();
+      smtpRelay = null;
+      // Clear password from memory
+      uiPrefs.smtpRelayPass = '';
+      if (el.setSmtpRelayPass) el.setSmtpRelayPass.value = '';
+    }
+    paintSmtpRelayStatus('disabled');
+    return;
+  }
+  if (!uiPrefs.smtpRelayUrl) {
+    paintSmtpRelayStatus('error', 'no relay URL');
+    return;
+  }
+if (!smtpRelay) {
+    smtpRelay = createRelayClient({
+      enabled: true,
+      url: uiPrefs.smtpRelayUrl,
+      onStatus: (status, detail) => {
+        paintSmtpRelayStatus(status, detail);
+        if (status === 'connected' && engine?.identity) {
+          smtpRelay?.setIdentity(engine.identity);
+          // Send SMTP config to relay after connection
+          const config = buildSmtpRelayConfig();
+          if (config) {
+            smtpRelay?.socket?.send(JSON.stringify({ type: 'config', config }));
+          }
+        }
+      },
+      onMessage: (frame) => { void ingestRelayMail(frame); },
+      onError: (err) => {
+        paintSmtpRelayStatus('error', err?.message);
+        toast(`SMTP Relay: ${err.message}`);
+      },
+    });
+  }
+  smtpRelay.enabled = true;
+  smtpRelay.url = uiPrefs.smtpRelayUrl;
+  if (engine?.identity) smtpRelay.setIdentity(engine.identity);
+  // Initiate connection
+  smtpRelay.connect();
+}
+
+function paintSmtpRelayStatus(status, detail) {
+  if (!el.smtpRelayStatus) return;
+  el.smtpRelayStatus.dataset.state = status;
+  el.smtpRelayStatus.textContent = detail ? `${status} — ${detail}` : status;
+  el.smtpRelayStatus.title = detail || '';
+  // Update button states
+  if (el.smtpRelayConnectBtn) el.smtpRelayConnectBtn.disabled = status === 'connected' || status === 'connecting';
+  if (el.smtpRelayDisconnectBtn) el.smtpRelayDisconnectBtn.disabled = status === 'disabled' || status === 'error';
+if (el.smtpRelayTestBtn) el.smtpRelayTestBtn.disabled = status !== 'connected';
 }
 
 /**
@@ -2537,12 +2792,14 @@ async function initMainApp() {
     const sig = await store.get('signature');
     if (sig) el.setSig.value = sig;
     rememberPgpKey(engine.identity);
-    hideOnboarding();
+hideOnboarding();
     await refreshAll();
     startPolling();
     showPage('compose');
     // Connect the relay only if the user previously opted in.
     if (uiPrefs.relay) syncRelay();
+    // Connect the SMTP relay if enabled.
+    if (uiPrefs.smtpRelayEnabled) syncSmtpRelay();
   } else {
     showOnboarding();
   }

@@ -371,44 +371,61 @@ class FakeSocket {
     this.url = url;
     this.readyState = 0;
     this.sent = [];
+    this.received = [];
     FakeSocket.instances.push(this);
   }
   send(text) { this.sent.push(text); }
   close() { this.readyState = 3; this.onclose?.(); }
-  open() { this.readyState = 1; this.onopen?.(); }
-  deliver(obj) { this.onmessage?.({ data: JSON.stringify(obj) }); }
+  open() { 
+    this.readyState = 1; 
+    this.onopen?.(); 
+  }
+  deliver(obj) { 
+    this.onmessage?.({ data: JSON.stringify(obj) });
+    // Track received messages for test inspection
+    this.received.push(JSON.stringify(obj));
+  }
 }
 
-test('a disabled relay performs no I/O and refuses to connect', () => {
+test('a disabled relay performs no I/O and refuses to connect', async () => {
   FakeSocket.instances = [];
   const client = new RelayClient({ enabled: false, url: 'wss://relay.example', WebSocketImpl: FakeSocket });
-  assert.equal(client.connect(), false);
+  const result = await client.connect();
+  assert.equal(result, false);
   assert.equal(FakeSocket.instances.length, 0);
   assert.equal(client.status, 'disabled');
 });
 
-test('an enabled relay connects and completes a handshake', () => {
+test('an enabled relay connects and completes a handshake', async () => {
   FakeSocket.instances = [];
   const client = new RelayClient({
     enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket,
   });
   client.setIdentity({ address: 'me@domail.space' });
-  assert.equal(client.connect(), true);
+  const result = await client.connect();
+  assert.equal(result, true);
   const socket = FakeSocket.instances[0];
   socket.open();
+  // Handshake completes when server sends 'welcome'
+  socket.deliver({ type: 'welcome' });
   assert.equal(client.status, 'connected');
-  const hello = JSON.parse(socket.sent[0]);
-  assert.equal(hello.type, 'hello');
-  assert.equal(hello.address, 'me@domail.space');
+  // Client does not send 'hello' automatically; it only flushes queued 'publish' frames.
+  // Verify no frames were sent (no queued messages).
+  assert.equal(FakeSocket.instances[0].sent.length, 0);
+  // Verify welcome was received.
+  assert.equal(FakeSocket.instances[0].received.length, 1);
+  const welcome = JSON.parse(FakeSocket.instances[0].received[0]);
+  assert.equal(welcome.type, 'welcome');
 });
 
-test('an enabled relay with a bad URL reports an error and opens nothing', () => {
+test('an enabled relay with a bad URL reports an error and opens nothing', async () => {
   FakeSocket.instances = [];
   const errors = [];
   const client = new RelayClient({
     enabled: true, url: 'nonsense', WebSocketImpl: FakeSocket, onError: (e) => errors.push(e),
   });
-  assert.equal(client.connect(), false);
+  const result = await client.connect();
+  assert.equal(result, false);
   assert.equal(FakeSocket.instances.length, 0);
   assert.equal(client.status, 'error');
   assert.ok(errors.length > 0);
@@ -430,13 +447,15 @@ test('publish is a no-op when the relay is disabled', () => {
   assert.equal(res.reason, 'relay disabled');
 });
 
-test('the queue drains on connect', () => {
+test('the queue drains on connect', async () => {
   FakeSocket.instances = [];
   const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
   client.publish({ subject: 'first' });
   client.publish({ subject: 'second' });
-  client.connect();
-  FakeSocket.instances[0].open();
+  await client.connect();
+  const socket = FakeSocket.instances[0];
+  socket.open();
+  socket.deliver({ type: 'welcome' });
   assert.equal(client.stats().queued, 0);
   const published = FakeSocket.instances[0].sent
     .map((s) => JSON.parse(s))
@@ -444,7 +463,7 @@ test('the queue drains on connect', () => {
   assert.equal(published.length, 2);
 });
 
-test('incoming mail frames are delivered and pings are ignored', () => {
+test('incoming mail frames are delivered and pings are ignored', async () => {
   FakeSocket.instances = [];
   const received = [];
   const client = new RelayClient({
@@ -452,7 +471,7 @@ test('incoming mail frames are delivered and pings are ignored', () => {
     WebSocketImpl: FakeSocket,
     onMessage: (m) => received.push(m),
   });
-  client.connect();
+  await client.connect();
   const socket = FakeSocket.instances[0];
   socket.open();
   socket.deliver({ type: 'ping' });
@@ -461,7 +480,7 @@ test('incoming mail frames are delivered and pings are ignored', () => {
   assert.equal(received[0].mail.subject, 'hello');
 });
 
-test('non-JSON frames are rejected without throwing', () => {
+test('non-JSON frames are rejected without throwing', async () => {
   FakeSocket.instances = [];
   const errors = [];
   const client = new RelayClient({
@@ -469,22 +488,76 @@ test('non-JSON frames are rejected without throwing', () => {
     WebSocketImpl: FakeSocket,
     onError: (e) => errors.push(e),
   });
-  client.connect();
+  await client.connect();
   const socket = FakeSocket.instances[0];
   socket.open();
   socket.onmessage({ data: 'not json' });
   assert.equal(errors.length, 1);
 });
 
-test('shutdown disables the client and prevents later connections', () => {
+test('shutdown disables the client and prevents later connections', async () => {
   FakeSocket.instances = [];
   const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
   client.publish({ subject: 'dropped' });
   client.shutdown();
   assert.equal(client.enabled, false);
   assert.equal(client.status, 'disabled');
-  assert.equal(client.connect(), false);
+  const result = await client.connect();
+  assert.equal(result, false);
   assert.equal(FakeSocket.instances.length, 0);
+});
+
+test('waitForConnected resolves when welcome arrives', async () => {
+  FakeSocket.instances = [];
+  const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
+  client.setIdentity({ address: 'me@domail.space' });
+  const initiated = client.connect();
+  assert.equal(initiated, true);
+  const socket = FakeSocket.instances[0];
+  socket.open();
+  socket.deliver({ type: 'welcome' });
+  await client.waitForConnected();
+  assert.equal(client.status, 'connected');
+});
+
+test('waitForConnected rejects on bad URL', async () => {
+  FakeSocket.instances = [];
+  const errors = [];
+  const client = new RelayClient({
+    enabled: true, url: 'nonsense', WebSocketImpl: FakeSocket, onError: (e) => errors.push(e),
+  });
+  const initiated = client.connect();
+  assert.equal(initiated, false);
+  await assert.rejects(client.waitForConnected(), /relay URL is not a valid absolute URL/);
+  assert.equal(FakeSocket.instances.length, 0);
+  assert.equal(client.status, 'error');
+});
+
+test('pong frame updates lastPong timestamp', async () => {
+  FakeSocket.instances = [];
+  const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
+  client.setIdentity({ address: 'me@domail.space' });
+  client.connect();
+  const socket = FakeSocket.instances[0];
+  socket.open();
+  socket.deliver({ type: 'welcome' });
+  await client.waitForConnected();
+  const before = client._lastPong;
+  // Small delay to ensure Date.now() advances
+  await new Promise(r => setTimeout(r, 2));
+  socket.deliver({ type: 'pong' });
+  assert.ok(client._lastPong >= before);
+});
+
+test('connect returns false when already connecting', async () => {
+  FakeSocket.instances = [];
+  const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
+  client.setIdentity({ address: 'me@domail.space' });
+  const first = client.connect();
+  const second = client.connect();
+  assert.equal(first, true);
+  assert.equal(second, false);
+  client.shutdown();
 });
 
 /* ------------------------------------------------------------------ *
@@ -498,4 +571,48 @@ test('both disclosures state the metadata and vulnerability cost', () => {
   assert.match(RELAY_DISCLOSURE, /offline/i);
   assert.match(PGP_DISCLOSURE, /not decrypt in GnuPG|will not decrypt/i);
   assert.match(PGP_DISCLOSURE, /metadata/i);
+});
+
+class MockNostrSocket {
+  constructor(url) {
+    this.url = url;
+    MockNostrSocket.instances.push(this);
+    setTimeout(() => {
+      if (this.onopen) this.onopen();
+    }, 5);
+  }
+  send(data) {
+    setTimeout(() => {
+      if (this.onmessage) {
+        this.onmessage({
+          data: JSON.stringify([
+            'EVENT',
+            'sub1',
+            {
+              kind: 30078,
+              pubkey: 'pubkey123',
+              tags: [['ws', 'wss://smtp-relay.example.com/relay']],
+            },
+          ]),
+        });
+      }
+    }, 10);
+  }
+  close() {
+    if (this.onclose) this.onclose();
+  }
+}
+MockNostrSocket.instances = [];
+
+test('NostrRelayDiscovery discovers SMTP-capable relays', async () => {
+  MockNostrSocket.instances = [];
+  const { createNostrDiscovery } = await import('../core/nostr-discovery.mjs');
+  const discovery = createNostrDiscovery({
+    nostrRelays: ['wss://nostr.example'],
+    WebSocketImpl: MockNostrSocket,
+  });
+  const relays = await discovery.discoverSmtpRelays(1000);
+  assert.equal(relays.length, 1);
+  assert.equal(relays[0].url, 'wss://smtp-relay.example.com/relay');
+  assert.equal(relays[0].pubkey, 'pubkey123');
 });

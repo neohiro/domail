@@ -647,31 +647,46 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
   const timeout = cfg.timeout ?? 15000;
   let socket = await open(cfg.host, cfg.port ?? (cfg.secure ? 465 : 587));
   let buf = '';
+  let lastErr = null;
+  /** Active waiter state so a stray socket event can reject it. */
+  let pending = null;
+
+  // One persistent watcher per socket generation. Without it a connection
+  // error between two replies would either crash the process (an EventEmitter
+  // 'error' with no listener) or silently hang the next waiter.
+  const watch = (s) => {
+    const failPending = (err) => {
+      if (pending) {
+        const { reject, timer, onData } = pending;
+        pending = null;
+        clearTimeout(timer);
+        s.removeListener('data', onData);
+        reject(err);
+      }
+    };
+    s.on('error', (e) => { lastErr = e; failPending(e); });
+    s.on('end', () => failPending(new Error('smtp connection closed by remote')));
+  };
+  watch(socket);
 
   // Wait for one complete (possibly multiline) SMTP reply. ESMTP multiline
   // replies use "250-..." for every line but the last ("250 ..."), so the
   // capability list — including STARTTLS/AUTH — is only visible after the
-  // final line. Waiters must also detach every listener they attach, or a
-  // single transaction accumulates them and trips Node's MaxListeners guard.
+  // final line. Only the data listener is transient.
   const waitReply = () =>
     new Promise((resolve, reject) => {
-      let settled = false;
-      const cleanup = () => {
+      if (lastErr) return reject(lastErr);
+      let done = false;
+      const finish = (fn, val) => {
+        if (done) return;
+        done = true;
+        pending = null;
         clearTimeout(timer);
         socket.removeListener('data', onData);
-        socket.removeListener('error', onError);
-        socket.removeListener('end', onEnd);
-      };
-      const finish = (fn, val) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
         fn(val);
       };
       const fail = (err) => finish(reject, err);
       const timer = setTimeout(() => fail(new Error('smtp timeout')), timeout);
-      const onError = (e) => fail(e);
-      const onEnd = () => fail(new Error('smtp connection closed by remote'));
 
       const onData = (chunk) => {
         buf += chunk;
@@ -699,9 +714,8 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
         finish(resolve, { code, text: taken.join('\n'), lines: taken });
       };
 
+      pending = { reject, timer, onData };
       socket.on('data', onData);
-      socket.on('error', onError);
-      socket.on('end', onEnd);
     });
 
   const send = (line) => {
@@ -723,7 +737,15 @@ export async function smtpSubmit(cfg, message, envelope, log = () => {}) {
     const caps = String(r.text).toUpperCase();
     if (caps.includes('STARTTLS') && !cfg.secure) throw new Error('relay demands STARTTLS');
 
-    if (cfg.secure && cfg.tls) socket = await cfg.tls(socket, { servername: cfg.host });
+    if (cfg.secure && cfg.tls) {
+      // Remove old socket listeners before upgrading to TLS
+      socket.removeAllListeners('error');
+      socket.removeAllListeners('end');
+      socket = await cfg.tls(socket, { servername: cfg.host });
+      buf = '';
+      lastErr = null;
+      watch(socket);
+    }
     if (cfg.user) {
       const b64 = (s) => bytesToBase64(new TextEncoder().encode(s));
       await send('AUTH LOGIN');
@@ -1013,13 +1035,22 @@ export class MailEngine {
 /** In-memory adapter. Used by tests and as the CLI's default. */
 export function memoryStore(seed = {}) {
   const _map = new Map(Object.entries(seed));
+  // Use structuredClone for efficient deep cloning (Node 17+, modern browsers).
+  // Falls back to JSON round-trip for environments without structuredClone.
+  const clone = (v) => {
+    try {
+      return structuredClone(v);
+    } catch {
+      return JSON.parse(JSON.stringify(v));
+    }
+  };
   return {
     async get(k) {
       const v = _map.get(k);
-      return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+      return v === undefined ? undefined : clone(v);
     },
     async set(k, v) {
-      _map.set(k, JSON.parse(JSON.stringify(v)));
+      _map.set(k, clone(v));
     },
     async del(k) {
       _map.delete(k);
@@ -1028,7 +1059,7 @@ export function memoryStore(seed = {}) {
       _map.clear();
     },
     async serialize() {
-      return JSON.parse(JSON.stringify(Object.fromEntries(_map)));
+      return clone(Object.fromEntries(_map));
     },
   };
 }

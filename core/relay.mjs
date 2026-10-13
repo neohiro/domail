@@ -42,6 +42,7 @@ const PROTOCOL_VERSION = 1;
 const HEARTBEAT_MS = 30000;
 const MAX_BACKOFF_MS = 60000;
 const MAX_QUEUE = 500;
+const MAX_RECONNECT_ATTEMPTS = 10;
 
 /** Hard ceiling on a single frame, to stop a hostile peer exhausting memory. */
 export const MAX_FRAME_BYTES = 5 * 1024 * 1024;
@@ -62,14 +63,46 @@ export class RelayClient {
     this.attempts = 0;
     this.heartbeatTimer = null;
     this.reconnectTimer = null;
+    this._pongCheckTimer = null;
+    this._lastPong = 0;
+    this._statusDetail = '';
     this.identity = null;
     /** Set by the owner once the user turns the setting back off. */
     this._closing = false;
+    this._connecting = false;
 
-    this.onStatus = opts.onStatus || (() => {});
+    this._statusListeners = new Set();
+    if (opts.onStatus) {
+      this._statusListeners.add(opts.onStatus);
+    }
     this.onMessage = opts.onMessage || (() => {});
     this.onError = opts.onError || (() => {});
     this.WebSocketImpl = opts.WebSocketImpl || (typeof WebSocket !== 'undefined' ? WebSocket : null);
+  }
+
+  get onStatus() {
+    return (status, detail) => {
+      for (const listener of this._statusListeners) {
+        listener(status, detail);
+      }
+    };
+  }
+
+  set onStatus(fn) {
+    this._statusListeners.clear();
+    if (typeof fn === 'function') {
+      this._statusListeners.add(fn);
+    }
+  }
+
+  addStatusListener(fn) {
+    if (typeof fn === 'function') {
+      this._statusListeners.add(fn);
+    }
+  }
+
+  removeStatusListener(fn) {
+    this._statusListeners.delete(fn);
   }
 
   /** Update identity used in the handshake. Call before connect(). */
@@ -79,6 +112,7 @@ export class RelayClient {
 
   _setStatus(status, detail) {
     this.status = status;
+    this._statusDetail = detail || '';
     this.onStatus(status, detail);
   }
 
@@ -114,7 +148,8 @@ export class RelayClient {
     return parsed.href;
   }
 
-  /** Explicitly connect. No-op unless enabled and a valid URL are present. */
+  /** Explicitly connect. No-op unless enabled and a valid URL are present.
+   * Returns true if connection was initiated, false otherwise. */
   connect() {
     if (!this.enabled) {
       this._setStatus('disabled');
@@ -122,6 +157,10 @@ export class RelayClient {
     }
     if (!this.WebSocketImpl) {
       this._setStatus('unsupported', 'this runtime has no WebSocket');
+      return false;
+    }
+    // Prevent concurrent connection attempts
+    if (this._connecting) {
       return false;
     }
     if (this.socket && (this.socket.readyState === 0 || this.socket.readyState === 1)) {
@@ -139,8 +178,42 @@ export class RelayClient {
 
     this._closing = false;
     this.attempts = 0;
+    this._connecting = true;
     this._open(href);
     return true;
+  }
+
+  /**
+   * Wait for the connection to reach 'connected' status.
+   * Returns a promise that resolves on success, rejects on error/disabled.
+   * Must be called after connect() returns true.
+   */
+  waitForConnected() {
+    return new Promise((resolve, reject) => {
+      if (this.status === 'connected') {
+        resolve(true);
+        return;
+      }
+      if (this.status === 'error' || this.status === 'disabled') {
+        reject(new Error(this._statusDetail || this.status));
+        return;
+      }
+      const onStatus = (status, detail) => {
+        if (status === 'connected') {
+          this.removeStatusListener(onStatus);
+          resolve(true);
+        } else if (status === 'error' || status === 'disabled') {
+          this.removeStatusListener(onStatus);
+          reject(new Error(detail || status));
+        }
+      };
+      this.addStatusListener(onStatus);
+    });
+  }
+
+  /** Remove a status handler added by waitForConnected(). */
+  offStatus(fn) {
+    this.removeStatusListener(fn);
   }
 
   _open(href) {
@@ -148,6 +221,7 @@ export class RelayClient {
     try {
       socket = new this.WebSocketImpl(href);
     } catch (e) {
+      this._connecting = false;
       this._setStatus('error', e.message);
       this.onError(new RelayError(`could not open relay: ${e.message}`));
       this._scheduleReconnect(href);
@@ -158,9 +232,8 @@ export class RelayClient {
 
     socket.onopen = () => {
       this.attempts = 0;
-      this._setStatus('connected');
-      this._send({ type: 'hello', v: PROTOCOL_VERSION, address: this.identity?.address || null });
-      this._flush();
+      this._setStatus('connecting');
+      // Don't send hello immediately - wait for 'welcome' from server
       this._startHeartbeat();
     };
 
@@ -172,14 +245,7 @@ export class RelayClient {
         this.onError(new RelayError('relay sent a frame that is not JSON'));
         return;
       }
-      if (frame?.type === 'pong') return;
-      if (frame?.type === 'mail') {
-        try {
-          this.onMessage(frame);
-        } catch (e) {
-          this.onError(e);
-        }
-      }
+      this._handleFrame(frame);
     };
 
     socket.onerror = () => {
@@ -191,6 +257,7 @@ export class RelayClient {
       this._stopHeartbeat();
       this.socket = null;
       if (this._closing) {
+        this._connecting = false;
         this._setStatus('disconnected');
         return;
       }
@@ -201,6 +268,12 @@ export class RelayClient {
 
   _scheduleReconnect(href) {
     if (this._closing || !this.enabled) return;
+    // Respect max reconnection attempts
+    if (this.attempts >= MAX_RECONNECT_ATTEMPTS) {
+      this._setStatus('error', 'max reconnection attempts reached');
+      this.onError(new RelayError('max reconnection attempts reached'));
+      return;
+    }
     clearTimeout(this.reconnectTimer);
     this.attempts++;
     // Exponential backoff with jitter so a downed relay is not hammered.
@@ -212,20 +285,83 @@ export class RelayClient {
     if (this.reconnectTimer.unref) this.reconnectTimer.unref();
   }
 
+  _handleFrame(frame) {
+    if (!frame || !frame.type) return;
+
+    switch (frame.type) {
+      case 'welcome':
+        // Server accepted our connection
+        this.attempts = 0;
+        this._setStatus('connected');
+        // Flush any queued messages
+        this._flush();
+        break;
+
+      case 'sent':
+        // Message was successfully sent by relay
+        if (frame.messageId) {
+          this.onMessage({ type: 'sent', messageId: frame.messageId });
+        }
+        break;
+
+      case 'error':
+        // Relay reported an error
+        this._setStatus('error', frame.message || 'relay error');
+        this.onError(new RelayError(frame.message || 'relay error'));
+        break;
+
+      case 'pong':
+        // Heartbeat response - connection is alive
+        this._lastPong = Date.now();
+        break;
+
+      case 'ping':
+        // Server heartbeat request - respond with pong
+        this._send({ type: 'pong' });
+        break;
+
+      default:
+        // Forward other frames to the message handler
+        if (this.onMessage) {
+          this.onMessage(frame);
+        }
+        break;
+    }
+  }
+
   _startHeartbeat() {
     this._stopHeartbeat();
+    this._lastPong = Date.now();
     this.heartbeatTimer = setInterval(() => {
       if (this.socket && this.socket.readyState === 1) {
         this._send({ type: 'ping' });
       }
     }, HEARTBEAT_MS);
     if (this.heartbeatTimer.unref) this.heartbeatTimer.unref();
+
+    // Pong timeout check: if we haven't received a pong in 2x heartbeat interval,
+    // the connection is likely dead. Close it to trigger reconnection.
+    this._pongCheckTimer = setInterval(() => {
+      if (this.socket && this.socket.readyState === 1) {
+        const elapsed = Date.now() - this._lastPong;
+        if (elapsed > HEARTBEAT_MS * 2) {
+          this._setStatus('error', 'heartbeat timeout: no pong received');
+          this.onError(new RelayError('heartbeat timeout'));
+          try { this.socket.close(1000, 'heartbeat timeout'); } catch {}
+        }
+      }
+    }, HEARTBEAT_MS);
+    if (this._pongCheckTimer.unref) this._pongCheckTimer.unref();
   }
 
   _stopHeartbeat() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    if (this._pongCheckTimer) {
+      clearInterval(this._pongCheckTimer);
+      this._pongCheckTimer = null;
     }
   }
 
@@ -255,7 +391,8 @@ export class RelayClient {
   publish(mail) {
     if (!this.enabled) return { queued: false, reason: 'relay disabled' };
     const frame = { type: 'publish', v: PROTOCOL_VERSION, mail };
-    if (this._send(frame)) return { queued: false, sent: true };
+    // Always queue the message; _flush() will send it when connected.
+    // This prevents double-sending when the connection opens and 'welcome' arrives.
     if (this.queue.length >= MAX_QUEUE) {
       this.queue.shift();
     }
@@ -266,6 +403,7 @@ export class RelayClient {
   /** Explicit disconnect. Also clears the queue and any pending reconnect. */
   disconnect(reason = 'disconnected by user') {
     this._closing = true;
+    this._connecting = false;
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this._stopHeartbeat();
@@ -280,6 +418,7 @@ export class RelayClient {
   /** Turn the feature off entirely: disconnect and refuse future connects. */
   shutdown() {
     this.enabled = false;
+    this._connecting = false;
     this.disconnect('relay disabled');
     this._setStatus('disabled');
   }
