@@ -1080,6 +1080,465 @@ el.relayDisconnectBtn.addEventListener('click', () => {
     });
   }
 
+  /** OS-agnostic MX Node Setup Assistant */
+  function openMxSetupAssistant() {
+    const isAndroid = /Android/i.test(navigator.userAgent);
+    const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
+    const isMobile = isAndroid || isIOS;
+    const isWindows = navigator.platform.toLowerCase().includes('win');
+    const isMac = navigator.platform.toLowerCase().includes('mac');
+    const isLinux = navigator.platform.toLowerCase().includes('linux');
+
+    let instructions = '=== DOM Mail MX Node Setup Assistant ===\n\n';
+    instructions += 'This guide helps you run your own local MX node.\n';
+    instructions += 'Choose your platform below for tailored instructions.\n\n';
+    instructions += '===========================================\n\n';
+
+    if (isMobile) {
+      instructions += '📱 MOBILE DEVICE DETECTED\n';
+      instructions += 'Running an MX node directly on mobile is not recommended due to:\n';
+      instructions += '  • Battery drain from persistent network services\n';
+      instructions += '  • OS background execution limits\n';
+      instructions += '  • Lack of static IP / port forwarding\n\n';
+      instructions += 'RECOMMENDED: Run the MX node on a desktop/server and connect from mobile.\n\n';
+      instructions += '--- Desktop Setup (run on your computer) ---\n\n';
+    }
+
+    instructions += '🖥️  PLATFORM-SPECIFIC INSTRUCTIONS\n\n';
+
+    if (isWindows || navigator.userAgent.includes('Windows')) {
+      instructions += '>>> WINDOWS (Docker Desktop) <<<\n\n';
+      instructions += '1. Install Docker Desktop:\n';
+      instructions += '   Download: https://www.docker.com/products/docker-desktop/\n\n';
+      instructions += '2. Open PowerShell as Administrator and run:\n';
+      instructions += '   git clone https://github.com/neohiro/domail.git\n';
+      instructions += '   cd domail\n';
+      instructions += '   docker compose up -d\n\n';
+      instructions += '3. Verify it\'s running:\n';
+      instructions += '   docker compose logs -f\n\n';
+      instructions += '4. In DOM Mail settings, set Relay WebSocket URL to:\n';
+      instructions += '   ws://localhost:8765/relay\n\n';
+    } else if (isMac) {
+      instructions += '>>> macOS (Docker Desktop or Colima) <<<\n\n';
+      instructions += 'Option A: Docker Desktop (easiest)\n';
+      instructions += '   Download: https://www.docker.com/products/docker-desktop/\n\n';
+      instructions += 'Option B: Colima (lightweight, CLI-only)\n';
+      instructions += '   brew install colima docker docker-compose\n';
+      instructions += '   colima start\n\n';
+      instructions += 'Then for either option:\n';
+      instructions += '   git clone https://github.com/neohiro/domail.git\n';
+      instructions += '   cd domail\n';
+      instructions += '   docker compose up -d\n\n';
+      instructions += '4. In DOM Mail settings, set Relay WebSocket URL to:\n';
+      instructions += '   ws://localhost:8765/relay\n\n';
+    } else if (isLinux) {
+      instructions += '>>> LINUX (Docker Engine or Podman) <<<\n\n';
+      instructions += 'Option A: Docker Engine\n';
+      instructions += '   sudo apt-get update && sudo apt-get install -y docker.io docker-compose-plugin\n\n';
+      instructions += 'Option B: Podman (rootless, daemonless)\n';
+      instructions += '   sudo apt-get install -y podman podman-compose\n\n';
+      instructions += 'Then for either option:\n';
+      instructions += '   git clone https://github.com/neohiro/domail.git\n';
+      instructions += '   cd domail\n';
+      instructions += '   docker compose up -d\n';
+      instructions += '   # Or with Podman: podman-compose up -d\n\n';
+      instructions += '4. In DOM Mail settings, set Relay WebSocket URL to:\n';
+      instructions += '   ws://localhost:8765/relay\n\n';
+    } else {
+      instructions += '>>> GENERIC / UNKNOWN PLATFORM <<<\n\n';
+      instructions += '1. Install Docker: https://docs.docker.com/get-docker/\n';
+      instructions += '2. Clone and run:\n';
+      instructions += '   git clone https://github.com/neohiro/domail.git\n';
+      instructions += '   cd domail\n';
+      instructions += '   docker compose up -d\n\n';
+      instructions += '3. In DOM Mail settings, set Relay WebSocket URL to:\n';
+      instructions += '   ws://localhost:8765/relay\n\n';
+    }
+
+    instructions += '===========================================\n';
+    instructions += '📋 ALTERNATIVE: CLI SMTP Bridge (no Docker)\n\n';
+    instructions += 'If you prefer not to use Docker, run the built-in bridge:\n\n';
+    instructions += '   node tools/smtp-bridge.mjs \\\n';
+    instructions += '     --server smtp.yourprovider.com \\\n';
+    instructions += '     --port 587 \\\n';
+    instructions += '     --mode starttls \\\n';
+    instructions += '     --from your@email.com \\\n';
+    instructions += '     --user your@email.com \\\n';
+    instructions += '     --pass "your-app-password"\n\n';
+    instructions += 'This connects directly to your SMTP provider without a full MX node.\n\n';
+
+    instructions += '===========================================\n';
+    instructions += '🔗 PORT FORWARDING (for inbound mail)\n\n';
+    instructions += 'To receive external email, forward port 25 on your router to the\n';
+    instructions += 'machine running the MX node. See your router\'s manual for instructions.\n\n';
+
+    instructions += '===========================================\n';
+    instructions += '📚 FULL DOCUMENTATION\n\n';
+    instructions += '• GitHub: https://github.com/neohiro/domail\n';
+    instructions += '• NETWORKS.md for Tor/I2P/Yggdrasil deployments\n';
+    instructions += '• README.md for complete setup guide\n\n';
+
+    // Create a modal dialog with the instructions
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.cssText = `
+      position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 10000; padding: 1rem; overflow: auto;
+    `;
+    modal.innerHTML = `
+      <div style="background: var(--bg-elevated, #1e1e1e); color: var(--fg, #fff);
+                  max-width: 700px; max-height: 90vh; width: 90%;
+                  border-radius: 8px; padding: 1.5rem; overflow: auto;
+                  font-family: monospace; white-space: pre-wrap;
+                  border: 1px solid var(--border, #333);">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+          <h2 style="margin: 0;">MX Node Setup Assistant</h2>
+          <button id="mxSetupClose" style="background: none; border: none; color: var(--fg, #fff); font-size: 1.5rem; cursor: pointer;">&times;</button>
+        </div>
+        <pre style="margin: 0; overflow: auto; max-height: 70vh;">${instructions}</pre>
+        <div style="margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end;">
+          <button id="mxSetupCopy" class="pill">Copy to Clipboard</button>
+          <button id="mxSetupGitHub" class="pill">Open GitHub</button>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector('#mxSetupClose').addEventListener('click', () => modal.remove());
+    modal.querySelector('#mxSetupCopy').addEventListener('click', () => {
+      navigator.clipboard.writeText(instructions).then(() => {
+        toast('Instructions copied to clipboard');
+      });
+    });
+    modal.querySelector('#mxSetupGitHub').addEventListener('click', () => {
+      window.open('https://github.com/neohiro/domail', '_blank');
+    });
+
+    // Close on overlay click
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) modal.remove();
+    });
+
+    // Add script download buttons after modal is in DOM
+    const buttonContainer = modal.querySelector('div[style*="justify-content: flex-end"]');
+    if (buttonContainer) {
+      const scriptButtons = document.createElement('div');
+      scriptButtons.style.cssText = 'margin-top: 0.5rem; display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap;';
+      
+      // Generate and add platform-specific script download buttons
+      const platformScripts = generatePlatformScripts(isWindows, isMac, isLinux, isMobile);
+      for (const [label, script, filename, mimeType] of platformScripts) {
+        const btn = document.createElement('button');
+        btn.className = 'pill';
+        btn.textContent = `Download ${label}`;
+        btn.addEventListener('click', () => {
+          const blob = new Blob([script], { type: mimeType });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(url);
+          toast(`${label} downloaded`);
+        });
+        scriptButtons.appendChild(btn);
+      }
+      buttonContainer.appendChild(scriptButtons);
+    }
+
+    // Add Port 25 Reachability Test section
+    const testSection = document.createElement('div');
+    testSection.style.cssText = 'margin-top: 1rem; padding: 1rem; background: var(--bg, #111); border-radius: 4px; border: 1px solid var(--border, #333);';
+    testSection.innerHTML = `
+      <h3 style="margin: 0 0 0.5rem 0;">🔍 Port 25 Reachability Test</h3>
+      <p style="margin: 0 0 0.5rem 0; font-size: 0.9rem; color: var(--fg-muted, #888);">
+        Test if your public IP can receive inbound SMTP on port 25. Requires a connected relay with port-check capability.
+      </p>
+      <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+        <button id="mxPort25Test" class="pill" disabled>Test Port 25</button>
+        <span id="mxPort25Result" style="align-self: center; font-size: 0.9rem;"></span>
+      </div>
+    `;
+    modal.querySelector('div[style*="max-height: 90vh"]').appendChild(testSection);
+
+    const port25Btn = modal.querySelector('#mxPort25Test');
+    const port25Result = modal.querySelector('#mxPort25Result');
+    
+    // Enable test button if relay is connected
+    if (smtpRelay && smtpRelay.status === 'connected') {
+      port25Btn.disabled = false;
+    }
+    
+    port25Btn.addEventListener('click', async () => {
+      port25Btn.disabled = true;
+      port25Btn.textContent = 'Testing...';
+      port25Result.textContent = '';
+      
+      try {
+        const result = await testPort25Reachability();
+        if (result.reachable) {
+          port25Result.textContent = `✅ Port 25 reachable! (latency: ${result.latency}ms)`;
+          port25Result.style.color = 'var(--success, #4caf50)';
+        } else {
+          port25Result.textContent = `❌ Port 25 not reachable: ${result.error || 'Connection refused or timeout'}`;
+          port25Result.style.color = 'var(--error, #f44336)';
+        }
+      } catch (e) {
+        port25Result.textContent = `❌ Test failed: ${e.message}`;
+        port25Result.style.color = 'var(--error, #f44336)';
+      } finally {
+        port25Btn.disabled = false;
+        port25Btn.textContent = 'Test Port 25';
+      }
+    });
+
+    // Listen for relay connection changes to enable/disable test button
+    const relayStatusHandler = (status) => {
+      if (port25Btn) {
+        port25Btn.disabled = status !== 'connected';
+      }
+    };
+    if (smtpRelay) {
+      smtpRelay.addStatusListener?.(relayStatusHandler);
+      // Clean up listener when modal closes
+      const originalClose = modal.querySelector('#mxSetupClose').onclick;
+      modal.querySelector('#mxSetupClose').onclick = () => {
+        if (smtpRelay) smtpRelay.removeStatusListener?.(relayStatusHandler);
+        modal.remove();
+      };
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+          if (smtpRelay) smtpRelay.removeStatusListener?.(relayStatusHandler);
+          modal.remove();
+        }
+      });
+    }
+  }
+  function generatePlatformScripts(isWindows, isMac, isLinux, isMobile) {
+    const scripts = [];
+    const baseCommands = {
+      clone: 'git clone https://github.com/neohiro/domail.git',
+      cd: 'cd domail',
+      up: 'docker compose up -d',
+      logs: 'docker compose logs -f',
+    };
+
+    if (isWindows) {
+      const ps1 = `# DOM Mail MX Node Setup Script for Windows (PowerShell)
+# Run as Administrator
+
+Write-Host "=== DOM Mail MX Node Setup for Windows ===" -ForegroundColor Cyan
+
+# Check for Docker Desktop
+if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
+    Write-Warning "Docker not found. Please install Docker Desktop first:"
+    Write-Host "  https://www.docker.com/products/docker-desktop/"
+    exit 1
+}
+
+Write-Host "Cloning DOM Mail repository..." -ForegroundColor Green
+${baseCommands.clone}
+${baseCommands.cd}
+
+Write-Host "Starting MX node with Docker Compose..." -ForegroundColor Green
+${baseCommands.up}
+
+Write-Host "Waiting for services to start..." -ForegroundColor Yellow
+Start-Sleep -Seconds 5
+
+Write-Host "Checking service status..." -ForegroundColor Green
+${baseCommands.logs}
+
+Write-Host ""
+Write-Host "=== Setup Complete ===" -ForegroundColor Cyan
+Write-Host "In DOM Mail settings, set Relay WebSocket URL to:"
+Write-Host "  ws://localhost:8765/relay"
+Write-Host ""
+Write-Host "For inbound mail, forward port 25 on your router to this machine."
+`;
+      scripts.push(['PowerShell Script', ps1, 'mx-setup.ps1', 'text/plain']);
+    } else if (isMac) {
+      const sh = `#!/bin/bash
+# DOM Mail MX Node Setup Script for macOS
+
+echo "=== DOM Mail MX Node Setup for macOS ==="
+
+# Check for Docker
+if ! command -v docker &> /dev/null; then
+    echo "Docker not found. Install Docker Desktop or Colima:"
+    echo "  Docker Desktop: https://www.docker.com/products/docker-desktop/"
+    echo "  Colima: brew install colima docker docker-compose && colima start"
+    exit 1
+fi
+
+echo "Cloning DOM Mail repository..."
+${baseCommands.clone}
+${baseCommands.cd}
+
+echo "Starting MX node with Docker Compose..."
+${baseCommands.up}
+
+echo "Waiting for services to start..."
+sleep 5
+
+echo "Checking service status..."
+${baseCommands.logs}
+
+echo ""
+echo "=== Setup Complete ==="
+echo "In DOM Mail settings, set Relay WebSocket URL to:"
+echo "  ws://localhost:8765/relay"
+echo ""
+echo "For inbound mail, forward port 25 on your router to this machine."
+`;
+      scripts.push(['macOS Shell Script', sh, 'mx-setup.sh', 'text/x-sh']);
+    } else if (isLinux) {
+      const sh = `#!/bin/bash
+# DOM Mail MX Node Setup Script for Linux
+
+echo "=== DOM Mail MX Node Setup for Linux ==="
+
+# Check for Docker or Podman
+if command -v docker &> /dev/null; then
+    DOCKER_CMD="docker compose"
+elif command -v podman &> /dev/null; then
+    DOCKER_CMD="podman-compose"
+    echo "Using Podman..."
+else
+    echo "Neither Docker nor Podman found. Install one:"
+    echo "  Docker: sudo apt-get install -y docker.io docker-compose-plugin"
+    echo "  Podman: sudo apt-get install -y podman podman-compose"
+    exit 1
+fi
+
+echo "Cloning DOM Mail repository..."
+${baseCommands.clone}
+${baseCommands.cd}
+
+echo "Starting MX node with \${DOCKER_CMD}..."
+\${DOCKER_CMD} up -d
+
+echo "Waiting for services to start..."
+sleep 5
+
+echo "Checking service status..."
+\${DOCKER_CMD} logs -f
+
+echo ""
+echo "=== Setup Complete ==="
+echo "In DOM Mail settings, set Relay WebSocket URL to:"
+echo "  ws://localhost:8765/relay"
+echo ""
+echo "For inbound mail, forward port 25 on your router to this machine."
+`;
+      scripts.push(['Linux Shell Script', sh, 'mx-setup.sh', 'text/x-sh']);
+    } else {
+      const sh = `#!/bin/bash
+# DOM Mail MX Node Setup Script (Generic)
+
+echo "=== DOM Mail MX Node Setup ==="
+
+if ! command -v docker &> /dev/null; then
+    echo "Docker not found. Install Docker: https://docs.docker.com/get-docker/"
+    exit 1
+fi
+
+echo "Cloning DOM Mail repository..."
+${baseCommands.clone}
+${baseCommands.cd}
+
+echo "Starting MX node with Docker Compose..."
+${baseCommands.up}
+
+echo "Waiting for services to start..."
+sleep 5
+
+echo "Checking service status..."
+${baseCommands.logs}
+
+echo ""
+echo "=== Setup Complete ==="
+echo "In DOM Mail settings, set Relay WebSocket URL to:"
+echo "  ws://localhost:8765/relay"
+echo ""
+echo "For inbound mail, forward port 25 on your router to this machine."
+`;
+      scripts.push(['Generic Shell Script', sh, 'mx-setup.sh', 'text/x-sh']);
+    }
+
+    // Always include CLI bridge script as alternative
+    const bridgeSh = `#!/bin/bash
+# DOM Mail CLI SMTP Bridge - Alternative to full MX node
+# Usage: ./smtp-bridge.sh <server> <port> <mode> <from> <user> <pass>
+
+set -e
+
+SERVER="\${1:-smtp.yourprovider.com}"
+PORT="\${2:-587}"
+MODE="\${3:-starttls}"
+FROM="\${4:-your@email.com}"
+USER="\${5:-\$FROM}"
+PASS="\${6}"
+
+if [ -z "\$PASS" ]; then
+    echo "Usage: \$0 <server> <port> <mode> <from> <user> <pass>"
+    echo "Example: \$0 smtp.gmail.com 587 starttls you@gmail.com you@gmail.com 'app-password'"
+    exit 1
+fi
+
+echo "Starting SMTP bridge to \$SERVER:\$PORT (\$MODE)..."
+node tools/smtp-bridge.mjs \\
+  --server "\$SERVER" \\
+  --port "\$PORT" \\
+  --mode "\$MODE" \\
+  --from "\$FROM" \\
+  --user "\$USER" \\
+  --pass "\$PASS"
+`;
+    scripts.push(['CLI Bridge Script', bridgeSh, 'smtp-bridge.sh', 'text/x-sh']);
+
+    return scripts;
+  }
+
+  /** Test if port 25 is reachable from the public internet via relay */
+  async function testPort25Reachability() {
+    if (!smtpRelay || smtpRelay.status !== 'connected') {
+      throw new Error('No relay connected. Start the relay first to test port 25.');
+    }
+    
+    return new Promise((resolve, reject) => {
+      const timeout = 10000;
+      const timer = setTimeout(() => {
+        reject(new Error('Port 25 test timeout'));
+      }, timeout);
+      
+      const subId = 'port25_test_' + Math.random().toString(36).slice(2, 8);
+      const start = Date.now();
+      
+      const handler = (frame) => {
+        if (frame && frame.type === 'port25_result' && frame.id === subId) {
+          clearTimeout(timer);
+          smtpRelay.removeMessageListener(handler);
+          const latency = Date.now() - start;
+          if (frame.reachable) {
+            resolve({ reachable: true, latency });
+          } else {
+            resolve({ reachable: false, latency, error: frame.error });
+          }
+        }
+      };
+      
+      smtpRelay.addMessageListener(handler);
+      
+      smtpRelay.socket?.send(JSON.stringify({
+        type: 'port25_test',
+        id: subId,
+      }));
+    });
+  }
+
   // SMTP Relay (external email delivery)
   if (el.setSmtpRelay) {
     el.setSmtpRelay.addEventListener('change', () => {
@@ -1099,15 +1558,10 @@ el.relayDisconnectBtn.addEventListener('click', () => {
           'External Email Delivery Notice:\n\n' +
           'Using an online external relay shares delivery metadata with that operator.\n' +
           'We strongly recommend running your own local MX node for complete privacy.\n\n' +
-          'Click OK to view instructions for running your own local MX node (Docker / smtp-bridge.mjs), or Cancel to use Nostr decentralized relay discovery.'
+          'Click OK to open the OS-agnostic MX Setup Assistant, or Cancel to use Nostr decentralized relay discovery.'
         );
         if (useOwn) {
-          alert(
-            'How to run your own local MX node:\n\n' +
-            '1. Run with Docker Compose: docker compose up (sets up inbound MX + WebSocket bridge)\n' +
-            '2. Or run the CLI bridge: node tools/smtp-bridge.mjs --server smtp.yourprovider.com --from you@domain.com\n\n' +
-            'SMTP relay remains disabled while you set up your private node.'
-          );
+          openMxSetupAssistant();
           uiPrefs.smtpRelayEnabled = false;
           el.setSmtpRelay.checked = false;
           saveUiPrefs();
@@ -2576,14 +3030,15 @@ el.setDomainCulture.addEventListener('change', () => {
     }
   });
 
-  el.unlockBtn.addEventListener('click', async () => {
+el.unlockBtn.addEventListener('click', async () => {
     const pw = el.unlockPassphrase.value;
     if (!pw) {
       toast('Enter passphrase');
       return;
     }
     try {
-      await unlockExistingStorage(pw);
+      // Use the imported unlockMailEngine function
+      await unlockMailEngine(engine, pw);
       el.passphraseModal.hidden = true;
       el.unlockPassphrase.value = '';
       el.encryptionStatus.textContent = 'Storage: Encrypted & Unlocked';
@@ -2727,26 +3182,30 @@ async function initMainApp() {
     console.warn('Salt check failed:', e);
   }
 
-  if (isEncrypted) {
+if (isEncrypted) {
     if (el.passphraseModal) el.passphraseModal.hidden = false;
     return;
   }
 
-  // Initialize mail engine
+// Initialize mail engine
   const { MailEngine } = await import('../../core/mail.mjs');
   engine = new MailEngine(store);
   
+  let loadSucceeded = false;
   try {
     await Promise.race([
       engine.load(),
       new Promise((_, reject) => setTimeout(() => reject(new Error('Engine load timeout')), 5000))
     ]);
+    loadSucceeded = true;
+    console.log('[domail] Engine loaded, identity:', engine.identity?.address || 'none');
   } catch (e) {
-    console.warn('Engine load failed, starting fresh:', e);
+    console.warn('Engine load failed:', e);
   }
 
-  // Auto-provision identity if missing
-  if (!engine.identity) {
+  // Auto-provision identity ONLY if load succeeded but no identity exists.
+  // If load failed, don't create a new identity - show onboarding instead.
+  if (loadSucceeded && !engine.identity) {
     try {
       const local = domainGenerator ? domainGenerator.generateLocalPart(uiPrefs.domainCulture) : 'nova';
       const domain = domainGenerator ? domainGenerator.generateDomain(uiPrefs.domainCulture) : 'domail.space';
@@ -2783,7 +3242,7 @@ async function initMainApp() {
     }
   }
 
-  if (engine.identity) {
+if (engine.identity) {
     renderIdentity();
     el.keyView.textContent = publicKeyBlock(engine.identity);
     el.setName.value = engine.identity.name;
@@ -2792,7 +3251,7 @@ async function initMainApp() {
     const sig = await store.get('signature');
     if (sig) el.setSig.value = sig;
     rememberPgpKey(engine.identity);
-hideOnboarding();
+    hideOnboarding();
     await refreshAll();
     startPolling();
     showPage('compose');
@@ -2801,6 +3260,7 @@ hideOnboarding();
     // Connect the SMTP relay if enabled.
     if (uiPrefs.smtpRelayEnabled) syncSmtpRelay();
   } else {
+    // No identity loaded (either load failed or store is empty)
     showOnboarding();
   }
 }

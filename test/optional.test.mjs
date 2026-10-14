@@ -434,7 +434,7 @@ test('an enabled relay with a bad URL reports an error and opens nothing', async
 test('publish queues while disconnected instead of dropping the message', () => {
   FakeSocket.instances = [];
   const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
-  const res = client.publish({ subject: 'queued', to: ['a@b.c'] });
+  const res = client.publish({ subject: 'queued', from: { address: 'test@example.com' }, to: ['a@b.c'] });
   assert.equal(res.queued, true);
   assert.equal(res.depth, 1);
   assert.equal(client.stats().queued, 1);
@@ -442,7 +442,7 @@ test('publish queues while disconnected instead of dropping the message', () => 
 
 test('publish is a no-op when the relay is disabled', () => {
   const client = new RelayClient({ enabled: false, WebSocketImpl: FakeSocket });
-  const res = client.publish({ subject: 'nope' });
+  const res = client.publish({ subject: 'nope', from: { address: 'test@example.com' }, to: ['a@b.c'] });
   assert.equal(res.queued, false);
   assert.equal(res.reason, 'relay disabled');
 });
@@ -450,8 +450,8 @@ test('publish is a no-op when the relay is disabled', () => {
 test('the queue drains on connect', async () => {
   FakeSocket.instances = [];
   const client = new RelayClient({ enabled: true, url: 'wss://relay.example/ws', WebSocketImpl: FakeSocket });
-  client.publish({ subject: 'first' });
-  client.publish({ subject: 'second' });
+  client.publish({ subject: 'first', from: { address: 'test@example.com' }, to: ['a@b.c'] });
+  client.publish({ subject: 'second', from: { address: 'test@example.com' }, to: ['a@b.c'] });
   await client.connect();
   const socket = FakeSocket.instances[0];
   socket.open();

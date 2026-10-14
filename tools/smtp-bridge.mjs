@@ -176,37 +176,239 @@ function socks5Connect(proxy, targetHost, targetPort, timeoutMs = 15000) {
   });
 }
 
-/** Plain or SOCKS5-tunneled TCP leg; implicit TLS (465) wrapped in connect. */
+/** Open a TCP (or SOCKS5-tunneled) socket to the given host:port. */
 async function openSocket(o, host, port, timeoutMs = 15000) {
-  let sock;
-  if (o.via) sock = await socks5Connect(o.via, host, port, timeoutMs);
-  else {
-    sock = await new Promise((resolve, reject) => {
-      const s = net.connect(port, host);
-      s.setNoDelay(true);
+  if (o.via) {
+    return socks5Connect(o.via, host, port, timeoutMs);
+  }
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, host);
+    sock.setNoDelay(true);
+    const timer = setTimeout(() => {
+      sock.destroy();
+      reject(new Error(`connection to ${host}:${port} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    sock.once('connect', () => {
+      clearTimeout(timer);
+      resolve(sock);
+    });
+    sock.once('error', (e) => {
+      clearTimeout(timer);
+      reject(e);
+    });
+  });
+}
+
+// Auto-detect public IP for UPnP NAT-PMP port forwarding
+async function getPublicIP() {
+  try {
+    // Use ifconfig.io which supports clean JSON responses
+    const http = await import('http');
+    return new Promise((resolve, reject) => {
+      const req = http.get('http://ifconfig.io/ip', { timeout: 5000 }, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => resolve(data.trim()));
+      });
+      req.on('error', reject);
+      req.on('timeout', () => req.destroy());
+    });
+  } catch {
+    return null;
+  }
+}
+
+// UPnP IGD discovery via SSDP (Simple Service Discovery Protocol)
+async function discoverUpnpGateway() {
+  return new Promise((resolve) => {
+    try {
+      const dgram = require('dgram');
+      const socket = dgram.createSocket('udp4');
+      const message = Buffer.from(
+        'M-SEARCH * HTTP/1.1\r\n' +
+        'HOST: 239.255.255.250:1900\r\n' +
+        'MAN: "ssdp:discover"\r\n' +
+        'MX: 2\r\n' +
+        'ST: urn:schemas-upnp-org:service:WANIPConnection:1\r\n\r\n'
+      );
+      
       const timer = setTimeout(() => {
-        s.destroy();
-        reject(new Error(`connection to ${host}:${port} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
-      s.once('connect', () => {
+        socket.close();
+        resolve(null);
+      }, 2000);
+
+      let handled = false;
+      socket.on('message', (msg, rinfo) => {
+        if (handled) return;
+        handled = true;
         clearTimeout(timer);
-        resolve(s);
+        socket.close();
+        const response = msg.toString();
+        const locationMatch = response.match(/LOCATION:\s*(.+)/i);
+        if (locationMatch) {
+          resolve({ location: locationMatch[1].trim(), host: rinfo.address });
+        } else {
+          resolve(null);
+        }
       });
-      s.once('error', (e) => {
-        clearTimeout(timer);
-        reject(e);
+
+      socket.bind(() => {
+        try {
+          socket.addMembership('239.255.255.250');
+          socket.send(message, 1900, '239.255.255.250');
+        } catch {
+          clearTimeout(timer);
+          socket.close();
+          resolve(null);
+        }
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+// Port 25 forwarding via UPnP/NAT-PMP
+async function setupUpnpPortForward(pubIp) {
+  try {
+    const gw = await discoverUpnpGateway();
+    if (!gw) {
+      return { success: false, reason: 'UPnP gateway not found on network' };
+    }
+
+    // Parse the gateway location URL to get control URL
+    const gwUrl = new URL(gw.location);
+    const baseUrl = `${gwUrl.protocol}//${gwUrl.host}`;
+
+    // Fetch the device description to get the control URL
+    const http = await import('http');
+    const https = await import('https');
+    const { URL } = await import('url');
+
+    const fetchControlUrl = (url) => new Promise((resolve) => {
+      const client = url.startsWith('https:') ? https : http;
+      client.get(url, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => resolve(data));
+      }).on('error', () => resolve(null));
+    });
+
+    const deviceDesc = await fetchControlUrl(gw.location);
+    if (!deviceDesc) {
+      return { success: false, reason: 'Failed to fetch UPnP device description' };
+    }
+
+    // Parse XML to find WANIPConnection control URL - more robust parsing
+    const controlUrlMatch = deviceDesc.match(/<controlURL>([^<]+)<\/controlURL>/i);
+    const serviceTypeMatch = deviceDesc.match(/<serviceType>urn:schemas-upnp-org:service:WANIPConnection:1<\/serviceType>/i);
+    const serviceIdMatch = deviceDesc.match(/<serviceId>urn:upnp-org:serviceId:WANIPConnection:1<\/serviceId>/i);
+
+    // Accept either serviceType or serviceId for compatibility
+    if (!controlUrlMatch || !(serviceTypeMatch || serviceIdMatch)) {
+      return { success: false, reason: 'WANIPConnection service not found in device description' };
+    }
+
+    const controlUrl = new URL(controlUrlMatch[1], baseUrl).href;
+    const localIp = await getLocalIp();
+
+    // SOAP request to AddPortMapping
+    const soapBody = `<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:AddPortMapping xmlns:u="urn:schemas-upnp-org:service:WANIPConnection:1">
+      <NewRemoteHost></NewRemoteHost>
+      <NewExternalPort>25</NewExternalPort>
+      <NewProtocol>TCP</NewProtocol>
+      <NewInternalPort>25</NewInternalPort>
+      <NewInternalClient>${localIp}</NewInternalClient>
+      <NewEnabled>1</NewEnabled>
+      <NewPortMappingDescription>DOM Mail SMTP Inbound</NewPortMappingDescription>
+      <NewLeaseDuration>0</NewLeaseDuration>
+    </u:AddPortMapping>
+  </s:Body>
+</s:Envelope>`;
+
+    const soapResult = await sendSoapRequest(controlUrl, 'AddPortMapping', soapBody);
+    
+    if (soapResult.success) {
+      return { 
+        success: true, 
+        reason: `Port 25 forwarding configured on UPnP gateway at ${gw.location}`,
+        externalPort: 25,
+        internalPort: 25,
+        protocol: 'TCP'
+      };
+    } else {
+      return { success: false, reason: `UPnP port mapping failed: ${soapResult.error}` };
+    }
+  } catch (e) {
+    return { success: false, reason: e.message };
+  }
+}
+
+async function getLocalIp() {
+  return new Promise((resolve, reject) => {
+    const { networkInterfaces } = require('os');
+    const nets = networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          resolve(net.address);
+          return;
+        }
+      }
+    }
+    // Don't resolve to 127.0.0.1 for UPnP - it would create an invalid port mapping
+    reject(new Error('No non-internal IPv4 interface found for UPnP port mapping'));
+  });
+}
+
+async function sendSoapRequest(controlUrl, action, soapBody) {
+  return new Promise((resolve) => {
+    const { URL } = require('url');
+    const url = new URL(controlUrl);
+    const http = url.protocol === 'https:' ? require('https') : require('http');
+    
+    const postData = soapBody;
+    const options = {
+      hostname: url.hostname,
+      port: url.port || (url.protocol === 'https:' ? 443 : 80),
+      path: url.pathname,
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/xml; charset="utf-8"',
+        'Content-Length': Buffer.byteLength(postData),
+        'SOAPAction': `"urn:schemas-upnp-org:service:WANIPConnection:1#${action}"`,
+        'User-Agent': 'DOM-Mail/1.0 UPnP/1.0'
+      },
+      timeout: 10000 // 10 second timeout for SOAP request
+    };
+
+    const req = http.request(options, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve({ success: true, response: data });
+        } else {
+          resolve({ success: false, error: `HTTP ${res.statusCode}: ${data}` });
+        }
       });
     });
-  }
-  sock.setMaxListeners(0);
-  if (o.mode === 'implicit') {
-    await new Promise((resolve, reject) => {
-      const t = tls.connect({ socket: sock, servername: host });
-      t.once('secureConnect', resolve);
-      t.once('error', reject);
+
+    req.on('error', (err) => {
+      resolve({ success: false, error: err.message });
     });
-  }
-  return sock;
+
+    req.on('timeout', () => {
+      req.destroy();
+      resolve({ success: false, error: 'SOAP request timeout' });
+    });
+
+    req.write(postData);
+    req.end();
+  });
 }
 
 function starttlsUpgrade(socket, host) {

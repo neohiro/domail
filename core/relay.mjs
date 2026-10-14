@@ -72,10 +72,13 @@ export class RelayClient {
     this._connecting = false;
 
     this._statusListeners = new Set();
+    this._messageListeners = new Set();
     if (opts.onStatus) {
       this._statusListeners.add(opts.onStatus);
     }
-    this.onMessage = opts.onMessage || (() => {});
+    if (opts.onMessage) {
+      this._messageListeners.add(opts.onMessage);
+    }
     this.onError = opts.onError || (() => {});
     this.WebSocketImpl = opts.WebSocketImpl || (typeof WebSocket !== 'undefined' ? WebSocket : null);
   }
@@ -103,6 +106,16 @@ export class RelayClient {
 
   removeStatusListener(fn) {
     this._statusListeners.delete(fn);
+  }
+
+  addMessageListener(fn) {
+    if (typeof fn === 'function') {
+      this._messageListeners.add(fn);
+    }
+  }
+
+  removeMessageListener(fn) {
+    this._messageListeners.delete(fn);
   }
 
   /** Update identity used in the handshake. Call before connect(). */
@@ -163,7 +176,8 @@ export class RelayClient {
     if (this._connecting) {
       return false;
     }
-    if (this.socket && (this.socket.readyState === 0 || this.socket.readyState === 1)) {
+    // Only return true if already fully connected (readyState === 1)
+    if (this.socket && this.socket.readyState === 1) {
       return true;
     }
 
@@ -321,9 +335,9 @@ export class RelayClient {
         break;
 
       default:
-        // Forward other frames to the message handler
-        if (this.onMessage) {
-          this.onMessage(frame);
+        // Forward other frames to all message listeners
+        for (const listener of this._messageListeners) {
+          listener(frame);
         }
         break;
     }
@@ -390,6 +404,16 @@ export class RelayClient {
    */
   publish(mail) {
     if (!this.enabled) return { queued: false, reason: 'relay disabled' };
+    // Basic validation to prevent queue pollution
+    if (!mail || typeof mail !== 'object') {
+      return { queued: false, reason: 'invalid mail object' };
+    }
+    if (!mail.to || !Array.isArray(mail.to) || mail.to.length === 0) {
+      return { queued: false, reason: 'missing recipients' };
+    }
+    if (!mail.from || !mail.from.address) {
+      return { queued: false, reason: 'missing from address' };
+    }
     const frame = { type: 'publish', v: PROTOCOL_VERSION, mail };
     // Always queue the message; _flush() will send it when connected.
     // This prevents double-sending when the connection opens and 'welcome' arrives.
@@ -408,6 +432,7 @@ export class RelayClient {
     this.reconnectTimer = null;
     this._stopHeartbeat();
     this.queue.length = 0;
+    this._messageListeners.clear();
     if (this.socket) {
       try { this.socket.close(1000, 'client disconnect'); } catch {}
       this.socket = null;
