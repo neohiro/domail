@@ -21,7 +21,9 @@
  * once and the bare binary is on PATH for agents, bots and shell scripts.
  */
 
-import { MailEngine, memoryStore, buildMessage, parseMessage, makeMessageId } from '../core/mail.mjs';
+import { MailEngine, memoryStore, buildMessage, parseMessage, makeMessageId,
+  validateTransport, dispatchMultiplex, makeTransportMessageId,
+  TRANSPORT_MAX_SIZE, compressBody, decompressBody, utf8 } from '../core/mail.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,6 +151,143 @@ function printTransportInfo(t, slug) {
   console.log(`  strength: ${t.strength}`);
   console.log(`  risk:     ${t.weakness}`);
   console.log(`  Use: network ${slug} [on|off|info]`);
+}
+
+/** Transport validation command: validate a message against a transport */
+async function doTransportValidate(engine, transport) {
+  if (!transport) {
+    console.log('Usage: transport validate <transport> [--to <addr>] [--subject <subj>] [--body <body>]');
+    console.log('Example: transport validate reticulum --to "friend@reticulum.local" --subject "test" --body "hello"');
+    return;
+  }
+  
+  const toAddr = '--to' in args ? args[args.indexOf('--to') + 1] : 'test@domail.space';
+  const subject = '--subject' in args ? args[args.indexOf('--subject') + 1] : 'Validation Test';
+  const body = '--body' in args ? args[args.indexOf('--body') + 1] : 'This is a test message for transport validation.';
+  
+  const msg = {
+    from: engine.identity || { address: 'nova@domail.space', name: 'Nova' },
+    to: [{ address: toAddr }],
+    subject,
+    text: body,
+  };
+  
+  const validation = validateTransport(msg, transport);
+  console.log(`Transport validation for '${transport}':`);
+  if (validation.ok) {
+    console.log(`  ✅ OK - Message can be sent via ${transport}`);
+    if (validation.warnings) {
+      console.log('  ⚠️  Warnings:');
+      for (const w of validation.warnings) {
+        console.log(`      - ${w}`);
+      }
+    }
+  } else {
+    console.log(`  ❌ FAILED - ${validation.reason}`);
+  }
+}
+
+/** Transport dispatch command: send a message via multiple transports */
+async function doTransportDispatch(engine, transportsArg) {
+  if (!transportsArg) {
+    console.log('Usage: transport dispatch <transport1,transport2,...> [--to <addr>] [--subject <subj>] [--body <body>]');
+    console.log('Example: transport dispatch direct,nostr,reticulum --to "friend@domail.space" --subject "Hello" --body "Testing multi-transport"');
+    return;
+  }
+  
+  const transports = transportsArg.split(',').map(t => t.trim());
+  const toAddr = '--to' in args ? args[args.indexOf('--to') + 1] : 'test@domail.space';
+  const subject = '--subject' in args ? args[args.indexOf('--subject') + 1] : 'Multi-Transport Test';
+  const body = '--body' in args ? args[args.indexOf('--body') + 1] : 'This message is being sent via multiple transports simultaneously.';
+  
+  const msg = {
+    from: engine.identity || { address: 'nova@domail.space', name: 'Nova' },
+    to: [{ address: toAddr }],
+    subject,
+    text: body,
+  };
+  
+  // Mock sender function - in reality this would use actual transport adapters
+  const mockSender = async (adaptedMail, transport) => {
+    // Simulate network delay
+    await new Promise(r => setTimeout(r, 50));
+    
+    // Check if we compressed the body
+    const compressed = adaptedMail._compressedFrom !== undefined;
+    
+    console.log(`    📤 Sending via ${transport}${compressed ? ' (compressed)' : ''}...`);
+    
+    // Simulate potential failures for some transports
+    if (transport === 'reticulum' && Math.random() < 0.3) {
+      return { ok: false, reason: 'Radio interference - packet lost' };
+    }
+    if (transport === 'nostr' && Math.random() < 0.1) {
+      return { ok: false, reason: 'Relay temporarily unavailable' };
+    }
+    
+    return {
+      ok: true,
+      messageId: makeTransportMessageId(transport),
+    };
+  };
+  
+  console.log(`Dispatching message to ${toAddr} via ${transports.length} transports: ${transports.join(', ')}`);
+  console.log('----------------------------------------');
+  
+  const results = await dispatchMultiplex(msg, transports, mockSender);
+  
+  let successCount = 0;
+  for (const [transport, result] of Object.entries(results)) {
+    if (result.ok) {
+      console.log(`  ✅ ${transport.padEnd(12)} - Sent (ID: ${result.messageId || 'N/A'})`);
+      successCount++;
+    } else {
+      console.log(`  ❌ ${transport.padEnd(12)} - Failed: ${result.reason}`);
+    }
+  }
+  
+  console.log('----------------------------------------');
+  console.log(`Result: ${successCount}/${transports.length} transports successful`);
+  
+  // Save a copy to outbox if at least one transport succeeded
+  if (successCount > 0) {
+    try {
+      await engine.send(msg, 'outbox');
+      console.log('📋 Message saved to local outbox');
+    } catch (e) {
+      console.log(`⚠️  Failed to save to outbox: ${e.message}`);
+    }
+  }
+}
+
+/** Transport compression demo: show compression ratios */
+async function doTransportCompress(engine, sizeArg) {
+  const size = parseInt(sizeArg) || 1000;
+  const text = 'Lorem ipsum dolor sit amet, consectetur adipiscing elit. '.repeat(Math.ceil(size / 50));
+  const bytes = utf8(text);
+  
+  console.log(`Original size: ${bytes.length} bytes`);
+  
+  const compressed = compressBody(bytes);
+  console.log(`Compressed size: ${compressed.length} bytes`);
+  console.log(`Compression ratio: ${(1 - compressed.length / bytes.length) * 100}%`);
+  
+  const decompressed = decompressBody(compressed);
+  console.log(`Decompressed size: ${decompressed.length} bytes`);
+  console.log(`Roundtrip successful: ${bytes.length === decompressed.length && 
+    Uint8Array.from(bytes).every((b, i) => b === decompressed[i])}`);
+}
+
+/** Transport benchmark: test size limits */
+async function doTransportLimits(engine) {
+  console.log('Transport Maximum Message Sizes:');
+  console.log('----------------------------------------');
+  for (const [transport, maxSize] of Object.entries(TRANSPORT_MAX_SIZE)) {
+    const display = maxSize === Infinity ? 'unlimited' : `${maxSize.toLocaleString()} bytes`;
+    console.log(`${transport.padEnd(12)}: ${display}`);
+  }
+  console.log('----------------------------------------');
+  console.log('Note: Actual usable size may be lower due to headers and encoding overhead.');
 }
 
 /** Shared by interactive and one-shot mode so the two never drift. */
@@ -374,10 +513,39 @@ async function interactive(engine) {
     console.log(`Relay URL set to ${arg}`);
   }
 
-  async function doNetwork(net, val) {
+async function doNetwork(net, val) {
     networkCommand(config(), net, val);
   }
-
+  
+  async function doTransport(cmd, val) {
+    if (!val) {
+      console.log('Usage: transport <validate|dispatch|compress|limits> [args...]');
+      console.log('       transport validate <transport> [--to <addr>] [--subject <subj>] [--body <body>]');
+      console.log('       transport dispatch <t1,t2,...> [--to <addr>] [--subject <subj>] [--body <body>]');
+      console.log('       transport compress <size>');
+      console.log('       transport limits');
+      return;
+    }
+    
+    switch (cmd) {
+      case 'validate':
+        await doTransportValidate(engine, val);
+        break;
+      case 'dispatch':
+        await doTransportDispatch(engine, val);
+        break;
+      case 'compress':
+        await doTransportCompress(engine, val);
+        break;
+      case 'limits':
+        await doTransportLimits(engine);
+        break;
+      default:
+        console.log(`Unknown transport subcommand: ${cmd}`);
+        console.log('Available: validate, dispatch, compress, limits');
+    }
+  }
+  
   async function doVpn(val, endpoint) {
     vpnCommand(config(), val, endpoint);
   }

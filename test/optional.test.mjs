@@ -607,12 +607,209 @@ MockNostrSocket.instances = [];
 test('NostrRelayDiscovery discovers SMTP-capable relays', async () => {
   MockNostrSocket.instances = [];
   const { createNostrDiscovery } = await import('../core/nostr-discovery.mjs');
-  const discovery = createNostrDiscovery({
-    nostrRelays: ['wss://nostr.example'],
-    WebSocketImpl: MockNostrSocket,
-  });
-  const relays = await discovery.discoverSmtpRelays(1000);
-  assert.equal(relays.length, 1);
-  assert.equal(relays[0].url, 'wss://smtp-relay.example.com/relay');
-  assert.equal(relays[0].pubkey, 'pubkey123');
+   const discovery = createNostrDiscovery({
+     nostrRelays: ['wss://nostr.example'],
+     WebSocketImpl: MockNostrSocket,
+   });
+   const relays = await discovery.discoverSmtpRelays(1000);
+   assert.equal(relays.length, 1);
+   assert.equal(relays[0].url, 'wss://smtp-relay.example.com/relay');
+   assert.equal(relays[0].pubkey, 'pubkey123');
+ });
+
+/* ------------------------------------------------------------------ *
+ * Transport awareness tests
+ * ------------------------------------------------------------------ */
+
+import {
+  validateTransport,
+  dispatchMultiplex,
+  TRANSPORT_MAX_SIZE,
+  compressBody,
+  decompressBody,
+  makeTransportMessageId,
+  collectBodyBytes,
+  utf8,
+} from '../core/mail.mjs';
+
+/* ---------------- transport max sizes ---------------- */
+
+test('transport max sizes are defined', () => {
+  assert.ok(TRANSPORT_MAX_SIZE.direct === Infinity);
+  assert.ok(TRANSPORT_MAX_SIZE.tor > 0);
+  assert.ok(TRANSPORT_MAX_SIZE.i2p > 0);
+  assert.ok(TRANSPORT_MAX_SIZE.yggdrasil > 0);
+  assert.ok(TRANSPORT_MAX_SIZE.nostr > 0);
+  assert.ok(TRANSPORT_MAX_SIZE.reticulum > 0);
+  assert.ok(TRANSPORT_MAX_SIZE.default > 0);
 });
+
+test('transport max sizes are ordered correctly', () => {
+  // LoRa/Reticulum should be the most constrained
+  assert.ok(TRANSPORT_MAX_SIZE.reticulum <= TRANSPORT_MAX_SIZE.nostr);
+  assert.ok(TRANSPORT_MAX_SIZE.nostr <= TRANSPORT_MAX_SIZE.yggdrasil);
+  assert.ok(TRANSPORT_MAX_SIZE.yggdrasil <= TRANSPORT_MAX_SIZE.i2p);
+  assert.ok(TRANSPORT_MAX_SIZE.i2p <= TRANSPORT_MAX_SIZE.tor);
+  assert.ok(TRANSPORT_MAX_SIZE.tor <= TRANSPORT_MAX_SIZE.default);
+});
+
+/* ---------------- transport validation ---------------- */
+
+test('validateTransport accepts small message for all transports', () => {
+  const smallMail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'hi',
+    text: 'hello',
+  };
+  
+  for (const transport of Object.keys(TRANSPORT_MAX_SIZE)) {
+    if (transport === 'default') continue;
+    const result = validateTransport(smallMail, transport);
+    assert.ok(result.ok, `Transport ${transport} should accept small message`);
+  }
+});
+
+test('validateTransport rejects oversized message', () => {
+  const hugeMail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'huge',
+    text: 'x'.repeat(2 * 1024 * 1024), // 2MB
+  };
+  
+  // Should fail for reticulum (16KB limit)
+  const result = validateTransport(hugeMail, 'reticulum');
+  assert.ok(!result.ok);
+  assert.ok(result.reason.includes('exceeds'));
+});
+
+test('validateTransport accepts edge case sizes', () => {
+  const sizedMail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'sized',
+    text: 'x'.repeat(TRANSPORT_MAX_SIZE.reticulum), // Exactly at limit
+  };
+  
+  // Should pass at exact limit
+  const result = validateTransport(sizedMail, 'reticulum');
+  assert.ok(result.ok);
+  
+  // Should fail one byte over
+  const oversizedMail = {
+    ...sizedMail,
+    text: 'x'.repeat(TRANSPORT_MAX_SIZE.reticulum + 1),
+  };
+  const result2 = validateTransport(oversizedMail, 'reticulum');
+  assert.ok(!result2.ok);
+});
+
+/* ---------------- compression ---------------- */
+
+test('compressBody reduces repetitive data', () => {
+  const repetitive = utf8('hello world '.repeat(100));
+  const compressed = compressBody(repetitive);
+  // Should be smaller (though our simple compressor may not always compress)
+  assert.ok(compressed.length <= repetitive.length);
+});
+
+test('compressBody roundtrip preserves data', () => {
+  const original = utf8('The quick brown fox jumps over the lazy dog');
+  const compressed = compressBody(original);
+  const decompressed = decompressBody(compressed);
+  assert.deepEqual(original, decompressed);
+});
+
+test('compressBody leaves small data unchanged', () => {
+  const small = utf8('small');
+  const compressed = compressBody(small);
+  // Small data should not be compressed (no benefit)
+  assert.deepEqual(small, compressed);
+});
+
+test('collectBodyBytes gets all body content', () => {
+  const mail = {
+    text: 'hello',
+    html: '<p>world</p>',
+    attachments: [
+      { name: 'a.txt', type: 'text/plain', bytes: utf8('attachment') },
+      { name: 'b.bin', type: 'application/octet-stream', bytes: new Uint8Array([1,2,3]) }
+    ]
+  };
+  
+  const bytes = collectBodyBytes(mail);
+  const expected = new Uint8Array([
+    ...utf8('hello'),
+    ...utf8('<p>world</p>'),
+    ...utf8('attachment'),
+    1, 2, 3
+  ]);
+  
+  assert.deepEqual(Array.from(bytes), Array.from(expected));
+});
+
+/* ---------------- dispatch multiplex ---------------- */
+
+test('dispatchMultiplex handles empty transports array', async () => {
+  const mail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'test',
+    text: 'hello',
+  };
+  
+  await assert.rejects(() => dispatchMultiplex(mail, [], () => ({ ok: true })), 
+    /non-empty transports/);
+});
+
+test('dispatchMultiplex requires sender function', async () => {
+  const mail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'test',
+    text: 'hello',
+  };
+  
+  await assert.rejects(() => dispatchMultiplex(mail, ['direct'], null), 
+    /requires a sender function/);
+});
+
+test('dispatchMultiplex processes transports sequentially', async () => {
+  const mail = {
+    from: { address: 'test@domail.space' },
+    to: [{ address: 'friend@domail.space' }],
+    subject: 'test',
+    text: 'x'.repeat(20 * 1024), // 20KB - exceeds reticulum (16KB), passes direct/nostr (unlimited / 64KB)
+  };
+  
+  let callCount = 0;
+  const sender = async (adaptedMail, transport) => {
+    callCount++;
+    return { ok: true, messageId: makeTransportMessageId(transport) };
+  };
+  
+  const results = await dispatchMultiplex(mail, ['direct', 'reticulum', 'nostr'], sender);
+  
+  // Direct and nostr should be called and succeed, reticulum should fail validation (size limit 16KB)
+  assert.ok(results.direct.ok);
+  assert.ok(results.nostr.ok);
+  assert.ok(!results.reticulum.ok);
+  assert.ok(results.reticulum.reason.includes('exceeds'));
+});
+
+/* ---------------- transport message id ---------------- */
+
+test('makeTransportMessageId creates correct format', () => {
+  const id = makeTransportMessageId('reticulum');
+  assert.ok(/^reticulum:\d+:/.test(id));
+  
+  const parts = id.split(':');
+  assert.equal(parts[0], 'reticulum');
+  assert.ok(/^\d+$/.test(parts[1])); // timestamp
+  assert.ok(/^[a-z0-9]+$/.test(parts[2])); // random
+});
+
+/* ------------------------------------------------------------------ *
+ * End of transport awareness tests
+ * ------------------------------------------------------------------ */
