@@ -18,16 +18,12 @@
 import {
   MailEngine,
   indexedDbStore,
-  buildMessage,
-  parseMessage,
   makeMessageId,
   bytesToBase64,
-  utf8,
 } from '../../core/mail.mjs';
 
 import {
   EncryptedStore,
-  createMailEngineWithEncryption,
   unlockMailEngine,
 } from '../../core/encrypted-store.mjs';
 
@@ -45,7 +41,6 @@ import {
 
 import {
   createDomainGenerator,
-  DOMAIN_CULTURES,
 } from '../../core/domains.mjs';
 
 import {
@@ -202,6 +197,11 @@ let uiPrefs = {
   smtpRelaySecure: false,
   smtpRelayUser: '',
   smtpRelayPass: '',
+  // Local MX Node (run own mail server in browser)
+  localMxEnabled: false,
+  localMxHostname: '',
+  localMxCert: '',
+  localMxKey: '',
 };
 
 const $ = (s) => document.querySelector(s);
@@ -214,13 +214,15 @@ const el = {
   tabs: $$('.tab'),
   subtabs: $$('.subtab'),
   pages: $$('.page'),
-  identity: $('#identity'),
+identity: $('#identity'),
   soundToggle: $('#soundToggle'),
   notifyToggle: $('#notifyToggle'),
   securityToggle: $('#securityToggle'),
   netstat: $('#netstat'),
   legalBanner: $('#legalBanner'),
   legalDismiss: $('#legalDismiss'),
+  mobileBottomNav: $('.mobile-bottom-nav'),
+  mobileTabs: $$('.mobile-bottom-nav .tab'),
   lists: { inbox: $('#list-inbox'), outbox: $('#list-outbox'), drafts: $('#list-drafts') },
   counts: { inbox: $('[data-count="inbox"]'), outbox: $('[data-count="outbox"]'), drafts: $('[data-count="drafts"]') },
   cTo: $('#cTo'), cCc: $('#cCc'), cBcc: $('#cBcc'), cSubject: $('#cSubject'),
@@ -332,6 +334,18 @@ setPgp: $('#setPgp'),
   smtpRelayTestBtn: $('#smtpRelayTestBtn'),
   smtpRelayStatus: $('#smtpRelayStatus'),
   optSmtpRelay: $('#optSmtpRelay'),
+  // Local MX Node elements
+  setLocalMx: $('#setLocalMx'),
+  localMxState: $('#localMxState'),
+  setLocalMxHostname: $('#setLocalMxHostname'),
+  setLocalMxCert: $('#setLocalMxCert'),
+  setLocalMxKey: $('#setLocalMxKey'),
+  localMxCertStatus: $('#localMxCertStatus'),
+  localMxStartBtn: $('#localMxStartBtn'),
+  localMxStopBtn: $('#localMxStopBtn'),
+  localMxTestBtn: $('#localMxTestBtn'),
+  localMxStatus: $('#localMxStatus'),
+  optLocalMx: $('#optLocalMx'),
 };
 
 /*
@@ -561,12 +575,17 @@ function renderContactSuggest(field) {
   const { token } = splitAddrField(field.value);
   const needle = token.trim().toLowerCase();
 
+  // Get user's own address to exclude from suggestions
+  const ownAddress = engine?.identity?.address?.toLowerCase() || '';
+
   // Merge learned contacts with identities we have keys for, de-duplicated.
   const seen = new Set();
   const all = [];
   const push = (address, name) => {
     const a = String(address || '').toLowerCase();
     if (!a || seen.has(a)) return;
+    // Exclude user's own address from suggestions
+    if (a === ownAddress) return;
     seen.add(a);
     all.push({ address: a, name: name || '' });
   };
@@ -956,6 +975,40 @@ if (el.setRelay) {
     el.vpnFileStatus.textContent = uiPrefs.vpnConfigName
       ? `Loaded: ${uiPrefs.vpnConfigName}`
       : 'No config loaded';
+  }
+
+  // Local MX Node
+  if (el.setLocalMx) {
+    el.setLocalMx.checked = !!uiPrefs.localMxEnabled;
+    if (el.localMxState) el.localMxState.textContent = uiPrefs.localMxEnabled ? 'On' : 'Off';
+    const localMxSec = document.getElementById('optLocalMx');
+    if (localMxSec) localMxSec.classList.toggle('is-on', !!uiPrefs.localMxEnabled);
+  }
+  if (el.setLocalMxHostname) {
+    el.setLocalMxHostname.value = uiPrefs.localMxHostname || '';
+    el.setLocalMxHostname.disabled = !uiPrefs.localMxEnabled;
+  }
+  if (el.setLocalMxCert) {
+    el.setLocalMxCert.disabled = !uiPrefs.localMxEnabled;
+  }
+  if (el.setLocalMxKey) {
+    el.setLocalMxKey.disabled = !uiPrefs.localMxEnabled;
+  }
+  if (el.localMxCertStatus) {
+    const hasCert = uiPrefs.localMxCert && uiPrefs.localMxKey;
+    el.localMxCertStatus.textContent = hasCert ? 'Certificate & key loaded' : 'Not loaded';
+  }
+  if (el.localMxStartBtn) {
+    el.localMxStartBtn.disabled = !uiPrefs.localMxEnabled || !uiPrefs.localMxHostname || !uiPrefs.localMxCert || !uiPrefs.localMxKey;
+  }
+  if (el.localMxStopBtn) {
+    el.localMxStopBtn.disabled = !uiPrefs.localMxEnabled;
+  }
+  if (el.localMxTestBtn) {
+    el.localMxTestBtn.disabled = !uiPrefs.localMxEnabled;
+  }
+  if (el.localMxStatus) {
+    el.localMxStatus.textContent = uiPrefs.localMxEnabled ? 'running' : 'disabled';
   }
 }
 
@@ -1643,6 +1696,79 @@ node tools/smtp-bridge.mjs \\
       }
     });
   }
+
+  // Local MX Node events
+  if (el.setLocalMx) {
+    el.setLocalMx.addEventListener('change', () => {
+      uiPrefs.localMxEnabled = el.setLocalMx.checked;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      toast(uiPrefs.localMxEnabled
+        ? 'Local MX Node enabled — configure hostname and certificates'
+        : 'Local MX Node disabled');
+    });
+  }
+  if (el.setLocalMxHostname) {
+    el.setLocalMxHostname.addEventListener('change', () => {
+      uiPrefs.localMxHostname = el.setLocalMxHostname.value.trim();
+      saveUiPrefs();
+      paintOptionalPrefs();
+    });
+  }
+  if (el.setLocalMxCert) {
+    el.setLocalMxCert.addEventListener('change', () => {
+      const file = el.setLocalMxCert.files && el.setLocalMxCert.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        uiPrefs.localMxCert = String(reader.result || '').slice(0, 65536);
+        saveUiPrefs();
+        paintOptionalPrefs();
+        toast('TLS certificate loaded (memory only)');
+      };
+      reader.readAsText(file);
+    });
+  }
+  if (el.setLocalMxKey) {
+    el.setLocalMxKey.addEventListener('change', () => {
+      const file = el.setLocalMxKey.files && el.setLocalMxKey.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        uiPrefs.localMxKey = String(reader.result || '').slice(0, 65536);
+        saveUiPrefs();
+        paintOptionalPrefs();
+        toast('TLS private key loaded (memory only)');
+      };
+      reader.readAsText(file);
+    });
+  }
+  if (el.localMxStartBtn) {
+    el.localMxStartBtn.addEventListener('click', async () => {
+      if (!uiPrefs.localMxHostname || !uiPrefs.localMxCert || !uiPrefs.localMxKey) {
+        toast('Configure hostname, certificate, and key first');
+        return;
+      }
+      uiPrefs.localMxEnabled = true;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      await startLocalMxNode();
+    });
+  }
+  if (el.localMxStopBtn) {
+    el.localMxStopBtn.addEventListener('click', async () => {
+      await stopLocalMxNode();
+      uiPrefs.localMxEnabled = false;
+      saveUiPrefs();
+      paintOptionalPrefs();
+      toast('Local MX Node stopped');
+    });
+  }
+  if (el.localMxTestBtn) {
+    el.localMxTestBtn.addEventListener('click', async () => {
+      await testLocalMxConnectivity();
+    });
+  }
 }
 
 async function initSecuritySystems() {
@@ -1655,7 +1781,10 @@ async function initSecuritySystems() {
   }
 
   if (uiPrefs.screenProtection) {
-    screenProtection = createScreenProtection();
+    screenProtection = createScreenProtection({ 
+      respectShowFullIdentity: true,
+      getShowFullIdentity: () => uiPrefs.showFullIdentity
+    });
     await screenProtection.init();
   }
 
@@ -1715,6 +1844,12 @@ function showPage(name) {
   currentPage = name;
   for (const tab of el.tabs) {
     tab.setAttribute('aria-selected', String(tab.dataset.page === name));
+  }
+  // Mobile bottom nav sync
+  if (el.mobileTabs) {
+    for (const tab of el.mobileTabs) {
+      tab.setAttribute('aria-selected', String(tab.dataset.page === name));
+    }
   }
   for (const page of el.pages) {
     const active = page.dataset.page === name;
@@ -1894,7 +2029,8 @@ function openCompose(opts = {}) {
   el.cCc.value = opts.cc || '';
   el.cBcc.value = opts.bcc || '';
   el.cSubject.value = opts.subject || '';
-  el.editor.innerHTML = opts.body || '';
+  // Sanitize draft body to prevent XSS from imported drafts
+  el.editor.innerHTML = opts.body ? sanitizeHtml(opts.body) : '';
   el.draftState.textContent = composeDraftId ? 'editing saved draft' : 'draft autosaves';
 
   if (el.sendNetDirect) el.sendNetDirect.checked = uiPrefs.netDirect !== false;
@@ -2219,6 +2355,116 @@ function paintSmtpRelayStatus(status, detail) {
   if (el.smtpRelayConnectBtn) el.smtpRelayConnectBtn.disabled = status === 'connected' || status === 'connecting';
   if (el.smtpRelayDisconnectBtn) el.smtpRelayDisconnectBtn.disabled = status === 'disabled' || status === 'error';
 if (el.smtpRelayTestBtn) el.smtpRelayTestBtn.disabled = status !== 'connected';
+}
+
+/* -------------------- Local MX Node (In-Browser Mail Server) -------------------- */
+
+let localMxNode = null;
+
+/** Start the local MX node using WebAssembly SMTP/IMAP server. */
+async function startLocalMxNode() {
+  if (!uiPrefs.localMxEnabled) return;
+  if (!uiPrefs.localMxHostname || !uiPrefs.localMxCert || !uiPrefs.localMxKey) {
+    toast('Missing hostname, certificate, or key');
+    return;
+  }
+
+  // Validate PEM format before attempting to start
+  const certValid = uiPrefs.localMxCert.includes('-----BEGIN CERTIFICATE-----') && uiPrefs.localMxCert.includes('-----END CERTIFICATE-----');
+  const keyValid = uiPrefs.localMxKey.includes('-----BEGIN PRIVATE KEY-----') || uiPrefs.localMxKey.includes('-----BEGIN RSA PRIVATE KEY-----');
+  if (!certValid || !keyValid) {
+    toast('Invalid certificate or key format (must be PEM)');
+    return;
+  }
+
+  try {
+    el.localMxStatus.textContent = 'starting…';
+    el.localMxStartBtn.disabled = true;
+
+    // Dynamic import of the WASM MX node module
+    const { createLocalMxNode } = await import('../../core/local-mx.mjs');
+    
+    localMxNode = createLocalMxNode({
+      hostname: uiPrefs.localMxHostname,
+      certPem: uiPrefs.localMxCert,
+      keyPem: uiPrefs.localMxKey,
+      identity: engine?.identity,
+      onStatus: (status, detail) => {
+        paintLocalMxStatus(status, detail);
+      },
+      onInboundMail: async (rawMessage) => {
+        if (engine) {
+          await engine.deliver(rawMessage);
+          await refreshAll();
+          toast(`MX Node: received new mail`);
+        }
+      },
+      onError: (err) => {
+        paintLocalMxStatus('error', err?.message);
+        toast(`MX Node error: ${err.message}`);
+      },
+    });
+
+    await localMxNode.start();
+    paintLocalMxStatus('running', 'MX node active on ports 25/587/993');
+    toast('Local MX Node started — ready to send/receive mail worldwide');
+  } catch (e) {
+    paintLocalMxStatus('error', e?.message);
+    toast(`Failed to start MX Node: ${e.message}`);
+    el.localMxStartBtn.disabled = false;
+  }
+}
+
+/** Stop the local MX node. */
+async function stopLocalMxNode() {
+  if (localMxNode) {
+    await localMxNode.stop();
+    localMxNode = null;
+    paintLocalMxStatus('disabled', 'MX node stopped');
+  }
+}
+
+/** Test MX node connectivity (port 25 reachability, TLS, etc.). */
+async function testLocalMxConnectivity() {
+  if (!localMxNode) {
+    toast('MX Node not running');
+    return;
+  }
+  
+  try {
+    el.localMxTestBtn.disabled = true;
+    el.localMxTestBtn.textContent = 'Testing…';
+    
+    const result = await localMxNode.testConnectivity();
+    
+    if (result.port25Reachable) {
+      toast(`✅ Port 25 reachable (latency: ${result.latency}ms)`);
+    } else {
+      toast(`❌ Port 25 not reachable: ${result.error || 'Connection refused'}`);
+    }
+    
+    if (result.tlsValid) {
+      toast(`✅ TLS certificate valid`);
+    } else {
+      toast(`❌ TLS issue: ${result.tlsError || 'Invalid certificate'}`);
+    }
+  } catch (e) {
+    toast(`Test failed: ${e.message}`);
+  } finally {
+    el.localMxTestBtn.disabled = false;
+    el.localMxTestBtn.textContent = 'Test Connectivity';
+  }
+}
+
+function paintLocalMxStatus(status, detail) {
+  if (!el.localMxStatus) return;
+  el.localMxStatus.dataset.state = status;
+  el.localMxStatus.textContent = detail ? `${status} — ${detail}` : status;
+  el.localMxStatus.title = detail || '';
+  
+  if (el.localMxStartBtn) el.localMxStartBtn.disabled = status === 'running' || status === 'starting';
+  if (el.localMxStopBtn) el.localMxStopBtn.disabled = status === 'disabled' || status === 'error';
+  if (el.localMxTestBtn) el.localMxTestBtn.disabled = status !== 'running';
 }
 
 /**
@@ -2598,6 +2844,11 @@ async function refreshContacts() {
 
 async function wipeIdentity() {
   try {
+    // Stop local MX node if running
+    if (localMxNode) {
+      await localMxNode.stop();
+      localMxNode = null;
+    }
     if (engine && engine.store && typeof engine.store.destroy === 'function') {
       await engine.store.destroy();
     } else if (engine) {
@@ -2971,7 +3222,7 @@ el.setDomainCulture.addEventListener('change', () => {
   }
 
   // Body obfuscation settings
-  if (el.setBodyObfuscate) {
+if (el.setBodyObfuscate) {
     el.setBodyObfuscate.addEventListener('change', () => {
       uiPrefs.bodyObfuscate = el.setBodyObfuscate.checked;
       saveUiPrefs();
@@ -2979,10 +3230,8 @@ el.setDomainCulture.addEventListener('change', () => {
         ? 'Body PII obfuscation ON — PII will be masked when not hovering'
         : 'Body PII obfuscation OFF');
       // Re-render current message if viewing one
-      if (currentMessageId) {
-        const box = document.querySelector('.page.is-active')?.dataset.page;
-        if (box) refreshList(box);
-      }
+      const box = document.querySelector('.page.is-active')?.dataset.page;
+      if (box) refreshList(box);
     });
   }
 
@@ -2992,8 +3241,6 @@ el.setDomainCulture.addEventListener('change', () => {
       saveUiPrefs();
     });
   }
-
-  // Passphrase management
 
   // Passphrase management
   el.setPassphraseBtn.addEventListener('click', async () => {
@@ -3113,11 +3360,62 @@ el.unlockBtn.addEventListener('click', async () => {
     }
   });
 
-  document.addEventListener('click', (e) => {
+document.addEventListener('click', (e) => {
     if (!el.emoji.hidden && !el.emoji.contains(e.target) && e.target !== el.emojiBtn) {
       el.emoji.hidden = true;
     }
+    
+    // Cross-tab navigation links (e.g., from Security to Account)
+    if (e.target.matches('[data-sub-link]')) {
+      e.preventDefault();
+      const targetSub = e.target.dataset.subLink;
+      if (targetSub) {
+        showPage('settings');
+        showSub(targetSub);
+      }
+    }
   });
+
+  // Mobile bottom nav: show/hide based on screen size
+  let mobileNavResizeTimer = null;
+  function updateMobileNav() {
+    const isMobile = window.innerWidth <= 720;
+    if (el.mobileBottomNav) {
+      el.mobileBottomNav.hidden = !isMobile;
+    }
+    if (el.tabs) {
+      const tabsContainer = el.tabs[0]?.closest('.tabs');
+      if (tabsContainer) {
+        tabsContainer.style.display = isMobile ? 'none' : 'flex';
+      }
+    }
+    // Adjust view height
+    const view = $('#view');
+    if (view) {
+      if (isMobile) {
+        view.style.height = 'calc(100dvh - 60px - 56px)';
+      } else {
+        view.style.height = 'calc(100dvh - var(--chrome-h))';
+      }
+    }
+  }
+  
+  // Initial check
+  updateMobileNav();
+  // Listen for resize with debounce
+  window.addEventListener('resize', () => {
+    if (mobileNavResizeTimer) clearTimeout(mobileNavResizeTimer);
+    mobileNavResizeTimer = setTimeout(updateMobileNav, 100);
+  });
+  
+  // Mobile bottom nav click handling
+  if (el.mobileTabs) {
+    for (const tab of el.mobileTabs) {
+      tab.addEventListener('click', () => {
+        if (tab.dataset.page) showPage(tab.dataset.page);
+      });
+    }
+  }
 }
 
 async function init() {
@@ -3262,7 +3560,423 @@ if (engine.identity) {
   } else {
     // No identity loaded (either load failed or store is empty)
     showOnboarding();
+}
+}
+
+/* ============================ MX Node Install Wizard ============================ */
+
+let mxWizardState = {
+  currentStep: 1,
+  config: {
+    domain: '',
+    useLetsEncrypt: true,
+    certPem: '',
+    keyPem: '',
+    transports: ['direct'],
+    security: {
+      tls13Only: true,
+      certPinning: true,
+      dane: true,
+      mtaSts: true,
+      rateLimit: 100,
+    }
+  },
+  prereqs: {
+    wasm: false,
+    crypto: false,
+    https: false,
+    port25: false,
+    dns: false,
   }
+};
+
+function openMxWizard() {
+  const wizard = $('#mxWizard');
+  if (!wizard) return;
+  wizard.hidden = false;
+  mxWizardState.currentStep = 1;
+  showMxWizardStep(1);
+  runPrereqChecks();
+}
+
+function closeMxWizard() {
+  const wizard = $('#mxWizard');
+  if (wizard) wizard.hidden = true;
+}
+
+function showMxWizardStep(step) {
+  mxWizardState.currentStep = step;
+  $$('.mx-wizard-step').forEach(el => el.hidden = el.dataset.step != String(step));
+  updateMxWizardNav();
+}
+
+function updateMxWizardNav() {
+  // Navigation is handled by step buttons
+}
+
+async function runPrereqChecks() {
+  const list = $('#mxPrereqList');
+  if (!list) return;
+  list.innerHTML = '<div class="minor">Checking...</div>';
+  
+  const checks = [
+    { id: 'wasm', name: 'WebAssembly Support', check: () => typeof WebAssembly !== 'undefined' && typeof WebAssembly.instantiate === 'function' },
+    { id: 'crypto', name: 'WebCrypto API', check: () => window.crypto && window.crypto.subtle },
+    { id: 'https', name: 'HTTPS / Secure Context', check: () => window.isSecureContext },
+    { id: 'port25', name: 'Port 25 Reachability (test)', check: async () => { try { const r = await fetch('/api/check-port25'); return r.ok; } catch { return false; } } },
+    { id: 'dns', name: 'DNS Resolution', check: async () => { try { await fetch('/api/check-dns'); return true; } catch { return false; } } },
+  ];
+  
+  let html = '';
+  for (const c of checks) {
+    html += `<div style="display:flex;align-items:center;gap:0.5rem;padding:0.5rem;margin:0.25rem 0;background:var(--bg);border-radius:var(--radius-sm);">
+      <span class="mx-prereq-icon" data-id="${c.id}" style="font-size:1.2rem;">⏳</span>
+      <span>${c.name}</span>
+    </div>`;
+  }
+  $('#mxPrereqList').innerHTML = html;
+  
+  let passed = 0;
+  for (const c of checks) {
+    try {
+      const result = await c.check();
+      mxWizardState.prereqs[c.id] = result;
+      const icon = $(`.mx-prereq-icon[data-id="${c.id}"]`);
+      if (icon) {
+        icon.textContent = result ? '✅' : '❌';
+        icon.style.color = result ? 'var(--neon)' : '#ff5a5a';
+      }
+      if (result) passed++;
+    } catch (e) {
+      mxWizardState.prereqs[c.id] = false;
+      const icon = $(`.mx-prereq-icon[data-id="${c.id}"]`);
+      if (icon) {
+        icon.textContent = '❌';
+        icon.style.color = '#ff5a5a';
+      }
+    }
+  }
+  
+  if (passed >= 3) {
+    $('#mxWizardNext1').disabled = false;
+  }
+  
+  updateDnsRecordsDisplay();
+}
+
+function updateDnsRecordsDisplay() {
+  const domain = mxWizardState.config.domain || 'yourdomain.tld';
+  const dnsEl = $('#mxDnsRecords');
+  if (!dnsEl) return;
+  
+  dnsEl.innerHTML = `
+    <div style="margin:0.5rem 0;font-family:var(--mono);font-size:0.75rem;">
+      <div><strong>MX Record:</strong> ${domain} IN MX 10 ${domain}</div>
+      <div><strong>A Record:</strong> ${domain} IN A YOUR_PUBLIC_IP</div>
+      <div><strong>AAAA Record:</strong> ${domain} IN AAAA YOUR_IPV6</div>
+      <div style="margin-top:0.5rem;"><strong>SPF:</strong> ${domain} IN TXT "v=spf1 mx ~all"</div>
+      <div><strong>DMARC:</strong> _dmarc.${domain} IN TXT "v=DMARC1; p=reject; rua=mailto:dmarc@${domain}"</div>
+      <div><strong>MTA-STS:</strong> _mta-sts.${domain} IN TXT "v=STSv1; id=1"</div>
+      <div><strong>TLS-RPT:</strong> _smtp._tls.${domain} IN TXT "v=TLSRPTv1; rua=mailto:tls@${domain}"</div>
+    </div>
+  `;
+}
+
+async function checkDnsRecords() {
+  const domain = mxWizardState.config.domain;
+  if (!domain) {
+    toast('Enter a domain first');
+    return;
+  }
+  
+  const btn = $('#mxWizardCheckDnsBtn');
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+  
+  try {
+    const response = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`);
+    const data = await response.json();
+    
+    if (data.Answer && data.Answer.length > 0) {
+      toast(`✅ DNS records found for ${domain}`);
+      mxWizardState.prereqs.dns = true;
+      $('#mxWizardNext2').disabled = false;
+    } else {
+      toast(`⚠️ No MX records found for ${domain}`);
+    }
+  } catch (e) {
+    toast(`❌ DNS check failed: ${e.message}`);
+  } finally {
+    btn.textContent = 'Check DNS';
+    btn.disabled = false;
+  }
+}
+
+function populateTransports() {
+  const container = $('#mxWizardTransports');
+  if (!container) return;
+  
+  const transports = [
+    { id: 'direct', name: 'Direct (TLS 1.3)', desc: 'Standard TLS delivery', required: true },
+    { id: 'tor', name: 'Tor Onion Service', desc: 'Anonymous delivery via Tor', required: false },
+    { id: 'i2p', name: 'I2P Eepsite', desc: 'Anonymous delivery via I2P', required: false },
+    { id: 'nostr', name: 'Nostr Relays', desc: 'Decentralized relay via Nostr', required: false },
+    { id: 'dns', name: 'DNS TXT Tunneling', desc: 'Censorship-resistant delivery', required: false },
+    { id: 'sneakernet', name: 'Sneakernet (QR/USB)', desc: 'Air-gapped physical delivery', required: false },
+  ];
+  
+  container.innerHTML = transports.map(t => `
+    <label class="check" style="padding:0.75rem;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--line);">
+      <input type="checkbox" data-transport="${t.id}" ${t.required ? 'checked disabled' : ''}>
+      <div>
+        <strong>${t.name}</strong>
+        <div class="minor">${t.desc}</div>
+      </div>
+    </label>
+  `).join('');
+  
+  $$('[data-transport]').forEach(cb => {
+    if (!cb.disabled) {
+      cb.checked = mxWizardState.config.transports.includes(cb.dataset.transport);
+      cb.addEventListener('change', () => {
+        if (cb.checked) {
+          mxWizardState.config.transports.push(cb.dataset.transport);
+        } else {
+          mxWizardState.config.transports = mxWizardState.config.transports.filter(t => t !== cb.dataset.transport);
+        }
+      });
+    }
+  });
+}
+
+function populateSecurityOptions() {
+  const container = $('#mxWizardSecurityOptions');
+  if (!container) return;
+  
+  const options = [
+    { id: 'tls13Only', name: 'TLS 1.3 Only', desc: 'Reject TLS 1.2 and below', enabled: true },
+    { id: 'certPinning', name: 'Certificate Pinning', desc: 'Pin CA certificates for outbound', enabled: true },
+    { id: 'dane', name: 'DANE/TLSA', desc: 'DNS-based certificate validation', enabled: true },
+    { id: 'mtaSts', name: 'MTA-STS', desc: 'Enforce TLS for inbound', enabled: true },
+    { id: 'rateLimit', name: 'Rate Limiting (100/min)', desc: 'Prevent abuse', enabled: true },
+  ];
+  
+  container.innerHTML = options.map(o => `
+    <label class="check" style="padding:0.75rem;background:var(--bg);border-radius:var(--radius-sm);border:1px solid var(--line);">
+      <input type="checkbox" data-security="${o.id}" ${o.enabled ? 'checked' : ''}>
+      <div>
+        <strong>${o.name}</strong>
+        <div class="minor">${o.desc}</div>
+      </div>
+    </label>
+  `).join('');
+  
+  $$('[data-security]').forEach(cb => {
+    cb.checked = mxWizardState.config.security[cb.dataset.security];
+    cb.addEventListener('change', () => {
+      mxWizardState.config.security[cb.dataset.security] = cb.checked;
+    });
+  });
+}
+
+function generateReview() {
+  const c = mxWizardState.config;
+  return `
+Domain: ${c.domain || 'Not set'}
+Certificate: ${c.useLetsEncrypt ? "Let's Encrypt (auto)" : 'Custom'}
+Transports: ${c.transports.join(', ')}
+Security:
+  TLS 1.3 Only: ${c.security.tls13Only}
+  Cert Pinning: ${c.security.certPinning}
+  DANE: ${c.security.dane}
+  MTA-STS: ${c.security.mtaSts}
+  Rate Limit: ${c.security.rateLimit}/min
+Prerequisites:
+  WASM: ${mxWizardState.prereqs.wasm ? '✅' : '❌'}
+  Crypto: ${mxWizardState.prereqs.crypto ? '✅' : '❌'}
+  HTTPS: ${mxWizardState.prereqs.https ? '✅' : '❌'}
+  Port 25: ${mxWizardState.prereqs.port25 ? '✅' : '❌'}
+  DNS: ${mxWizardState.prereqs.dns ? '✅' : '❌'}
+`;
+}
+
+async function installMxNode() {
+  const reviewEl = $('#mxWizardReview');
+  if (reviewEl) reviewEl.textContent = generateReview();
+  
+  const installingEl = $('#mxWizardInstalling');
+  const successEl = $('#mxWizardSuccess');
+  const errorEl = $('#mxWizardError');
+  const finishBtn = $('#mxWizardFinishBtn');
+  const installBtn = $('#mxWizardInstallBtn');
+  
+  $('#mxWizardReview').parentElement.style.display = 'none';
+  installingEl.hidden = false;
+  installBtn.hidden = true;
+  $$('.mx-wizard-step[data-step="6"] button').forEach(b => b.disabled = true);
+  
+  try {
+    const config = {
+      hostname: mxWizardState.config.domain,
+      certPem: mxWizardState.config.certPem,
+      keyPem: mxWizardState.config.keyPem,
+      identity: engine?.identity,
+      transports: mxWizardState.config.transports.map(id => ({ id, enabled: true })),
+      smtp: { require_starttls: true, auth_over_tls_only: true, max_message_size: 52428800, rate_limit_per_minute: mxWizardState.config.security.rateLimit },
+      imap: { require_tls: true },
+      submission: { require_auth: true, require_starttls: true },
+      security: mxWizardState.config.security,
+      storage: { max_size: 1024*1024*1024 }
+    };
+    
+    $('#mxWizardInstallStatus').textContent = 'Loading MX Node module...';
+    
+    const { createLocalMxNode } = await import('../../core/local-mx.mjs');
+    
+    $('#mxWizardInstallStatus').textContent = 'Initializing MX Node...';
+    
+    localMxNode = await createLocalMxNode(config);
+    await localMxNode.start();
+    
+    uiPrefs.localMxEnabled = true;
+    uiPrefs.localMxHostname = mxWizardState.config.domain;
+    uiPrefs.localMxCert = mxWizardState.config.certPem;
+    uiPrefs.localMxKey = mxWizardState.config.keyPem;
+    saveUiPrefs();
+    paintOptionalPrefs();
+    
+    installingEl.hidden = true;
+    successEl.hidden = false;
+    $('#mxWizardFinishBtn').hidden = false;
+    
+    toast('MX Node installed and running!');
+    
+  } catch (e) {
+    installingEl.hidden = true;
+    errorEl.hidden = false;
+    $('#mxWizardErrorMsg').textContent = e.message;
+    installBtn.hidden = false;
+    $$('.mx-wizard-step[data-step="6"] button').forEach(b => b.disabled = false);
+  }
+}
+
+function bindMxWizardEvents() {
+  const wizard = $('#mxWizard');
+  if (!wizard) return;
+  
+  $('#mxWizardClose').addEventListener('click', closeMxWizard);
+  wizard.addEventListener('click', (e) => {
+    if (e.target === wizard) closeMxWizard();
+  });
+  
+  $('#mxPrereqCheckBtn').addEventListener('click', runPrereqChecks);
+  $('#mxWizardNext1').addEventListener('click', () => {
+    showMxWizardStep(2);
+    updateDnsRecordsDisplay();
+  });
+  
+  $('#mxWizardDomain').addEventListener('input', (e) => {
+    mxWizardState.config.domain = e.target.value.trim();
+    updateDnsRecordsDisplay();
+  });
+  $('#mxWizardPrev2').addEventListener('click', () => showMxWizardStep(1));
+  $('#mxWizardCheckDnsBtn').addEventListener('click', checkDnsRecords);
+  $('#mxWizardNext2').addEventListener('click', () => {
+    showMxWizardStep(3);
+  });
+  
+  $('#mxWizardUseLetsEncrypt').addEventListener('change', (e) => {
+    const custom = $('#mxWizardCustomCertFields');
+    const key = $('#mxWizardCustomKeyFields');
+    custom.hidden = e.target.checked;
+    key.hidden = e.target.checked;
+    if (!e.target.checked) {
+      $('#mxWizardNext3').disabled = false;
+    }
+  });
+  $('#mxWizardCertFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        mxWizardState.config.certPem = reader.result;
+        $('#mxWizardCertStatus').textContent = file.name;
+        checkCustomCertComplete();
+      };
+      reader.readAsText(file);
+    }
+  });
+  $('#mxWizardKeyFile').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        mxWizardState.config.keyPem = reader.result;
+        $('#mxWizardKeyStatus').textContent = file.name;
+        checkCustomCertComplete();
+      };
+      reader.readAsText(file);
+    }
+  });
+  
+  function checkCustomCertComplete() {
+    if (mxWizardState.config.certPem && mxWizardState.config.keyPem) {
+      $('#mxWizardNext3').disabled = false;
+    }
+  }
+  
+  $('#mxWizardPrev3').addEventListener('click', () => showMxWizardStep(2));
+  $('#mxWizardNext3').addEventListener('click', () => {
+    showMxWizardStep(4);
+    populateTransports();
+  });
+  
+  $('#mxWizardPrev4').addEventListener('click', () => showMxWizardStep(3));
+  $('#mxWizardNext4').addEventListener('click', () => {
+    showMxWizardStep(5);
+    populateSecurityOptions();
+  });
+  
+  $('#mxWizardPrev5').addEventListener('click', () => showMxWizardStep(4));
+  $('#mxWizardNext5').addEventListener('click', () => {
+    showMxWizardStep(6);
+    $('#mxWizardReview').textContent = generateReview();
+  });
+  
+  $('#mxWizardPrev6').addEventListener('click', () => showMxWizardStep(5));
+  $('#mxWizardInstallBtn').addEventListener('click', installMxNode);
+  
+  $('#mxWizardFinishBtn').addEventListener('click', () => {
+    closeMxWizard();
+    showSub('network');
+  });
+  
+  $('#mxWizardUseLetsEncrypt').addEventListener('change', (e) => {
+    mxWizardState.config.useLetsEncrypt = e.target.checked;
+    if (e.target.checked) {
+      mxWizardState.config.certPem = '';
+      mxWizardState.config.keyPem = '';
+      $('#mxWizardNext3').disabled = false;
+    }
+  });
+  
+  const openWizardBtn = document.createElement('button');
+  openWizardBtn.className = 'pill';
+  openWizardBtn.textContent = '🧙 Open Install Wizard';
+  openWizardBtn.style.marginTop = '0.75rem';
+  openWizardBtn.addEventListener('click', openMxWizard);
+  
+  const localMxSection = $('#optLocalMx');
+  if (localMxSection) {
+    const warn = localMxSection.querySelector('.warn');
+    if (warn) {
+      warn.parentNode.insertBefore(openWizardBtn, warn);
+    }
+  }
+}
+
+function initMxWizard() {
+  bindMxWizardEvents();
 }
 
 init();
