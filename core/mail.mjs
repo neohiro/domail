@@ -197,6 +197,7 @@ export function parseAddressList(value) {
 /** Render one address back to a header value. */
 export function formatAddress(addr) {
   const { name, address } = addr || {};
+  if (!address) return '';
   const safeAddr = sanitizeHeaderValue(address);
   if (!name) return safeAddr;
   const safeName = sanitizeHeaderValue(name);
@@ -989,6 +990,7 @@ export class MailEngine {
     this.identity = null;
     this.listeners.clear();
     this.emit({ type: 'wiped' });
+    if (typeof this.save === 'function') await this.save();
   }
 
   /* -------- export -------- */

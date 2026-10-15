@@ -23,7 +23,7 @@
 
 import { MailEngine, memoryStore, buildMessage, parseMessage, makeMessageId,
   validateTransport, dispatchMultiplex, makeTransportMessageId,
-  TRANSPORT_MAX_SIZE, compressBody, decompressBody, utf8 } from '../core/mail.mjs';
+  TRANSPORT_MAX_SIZE, compressBody, decompressBody, utf8, bytesToBase64 } from '../core/mail.mjs';
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -365,17 +365,29 @@ async function createEngine() {
   await engine.load();
   // Auto-provision a minimal identity if none exists (for local delivery)
   if (!engine.identity) {
-    await engine.setIdentity({
-      name: 'CLI User',
-      address: 'anonymous@domail.space',
-      local: 'anonymous',
-      domain: 'domail.space',
-      ed25519: '',
-      x25519: '',
-      created: Date.now(),
-    });
+    const identity = await generateCliIdentity('CLI User', 'anonymous', 'domail.space');
+    await engine.setIdentity(identity);
   }
   return engine;
+}
+
+async function generateCliIdentity(name, local, domain) {
+  if (!crypto.subtle) {
+    throw new Error('WebCrypto not available');
+  }
+  const ed = await crypto.subtle.generateKey({ name: 'Ed25519' }, true, ['sign', 'verify']);
+  const x = await crypto.subtle.generateKey({ name: 'X25519' }, true, ['deriveBits']);
+  const edPub = new Uint8Array(await crypto.subtle.exportKey('raw', ed.publicKey));
+  const xPub = new Uint8Array(await crypto.subtle.exportKey('raw', x.publicKey));
+  return {
+    name,
+    local,
+    domain,
+    address: `${local}@${domain}`,
+    ed25519: bytesToBase64(edPub),
+    x25519: bytesToBase64(xPub),
+    created: Date.now(),
+  };
 }
 
 function pad(str, len) {
