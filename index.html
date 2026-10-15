@@ -72,6 +72,16 @@
   </div>
 </header>
 
+<!-- Mobile bottom navigation -->
+<nav class="mobile-bottom-nav" aria-label="Mailboxes" hidden>
+  <button class="tab" data-page="compose" type="button" aria-selected="true"><span class="nav-icon">✍</span><span class="nav-label">Compose</span></button>
+  <button class="tab" data-page="inbox" type="button"><span class="nav-icon">📥</span><span class="nav-label">Inbox</span> <span class="count" data-count="inbox">0</span></button>
+  <button class="tab" data-page="outbox" type="button"><span class="nav-icon">📤</span><span class="nav-label">Outbox</span> <span class="count" data-count="outbox">0</span></button>
+  <button class="tab" data-page="drafts" type="button"><span class="nav-icon">📝</span><span class="nav-label">Drafts</span> <span class="count" data-count="drafts">0</span></button>
+  <button class="tab" data-page="settings" type="button"><span class="nav-icon">⚙</span><span class="nav-label">Settings</span></button>
+  <button class="tab tab-danger" data-page="wipe" type="button"><span class="nav-icon">🗑</span><span class="nav-label">Wipe</span></button>
+</nav>
+
 <!-- ============================ view: bottom 75% ============================ -->
 <main id="view">
 
@@ -320,9 +330,10 @@
 
       <h2 class="minor" style="margin-top: 1.5rem;">Anti-Surveillance</h2>
       <label class="check"><input id="setAntiKeylogger" type="checkbox" checked> Anti-keylogger (virtual keyboard, input masking, timing noise)</label>
-      <label class="check"><input id="setScreenProtection" type="checkbox" checked> Screen theft protection (PII obfuscation, print/screenshot redaction)</label>
+      <label class="check"><input id="setScreenProtection" type="checkbox" checked> Screen theft protection (print/screenshot redaction, no PII rendering in output)</label>
       <label class="check"><input id="setFingerprintProtection" type="checkbox" checked> Zero fingerprinting (canvas, WebGL, audio, fonts, battery, WebRTC)</label>
       <label class="check"><input id="setDevToolsBlock" type="checkbox"> Block DevTools shortcuts (F12, Ctrl+Shift+I, etc.)</label>
+      <p class="minor"><em>PII obfuscation on screen is controlled in <a href="#" data-sub-link="account">Account → Privacy → "Show full addresses"</a>.</em></p>
 
       <h2 class="minor" style="margin-top: 1.5rem;">Network</h2>
       <label class="check"><input id="setOfflineMode" type="checkbox" checked> Offline-first (Service Worker, no network after load)</label>
@@ -341,6 +352,56 @@
           privacy. Read the warning on each before enabling it.
         </p>
       </div>
+
+      <!-- ---------- Local Mail Server (MX Node) ---------- -->
+      <section class="opt" id="optLocalMx" aria-labelledby="optLocalMxTitle">
+        <header class="opt-head-row">
+          <h3 class="opt-name" id="optLocalMxTitle">Install Own Mail Server (MX Node)</h3>
+          <label class="switch">
+            <input id="setLocalMx" type="checkbox" aria-describedby="localMxWarn">
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-label" id="localMxState">Off</span>
+          </label>
+        </header>
+        <p class="minor">
+          Run a full mail server directly from this browser tab using WebAssembly. Handles SMTP (port 25), IMAP, and submission (587/465) with TLS. Receives and sends mail with any email provider worldwide (Gmail, Outlook, Proton, etc.).
+        </p>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>Server Hostname / Domain</span>
+          <input id="setLocalMxHostname" type="text" inputmode="text" spellcheck="false"
+                 placeholder="mail.yourdomain.tld" autocomplete="off"
+                 disabled aria-describedby="localMxHostnameHelp">
+          <small class="minor" id="localMxHostnameHelp">
+            The hostname this MX node will identify as. Requires valid DNS MX/A records pointing to your public IP.
+          </small>
+        </div>
+        <div class="field" style="margin-top: 0.75rem;">
+          <span>TLS Certificate (PEM) & Private Key (PEM)</span>
+          <label class="pill pill--file">Cert <input id="setLocalMxCert" type="file" accept=".pem,.crt,.cert" hidden disabled></label>
+          <label class="pill pill--file">Key <input id="setLocalMxKey" type="file" accept=".pem,.key" hidden disabled></label>
+          <span id="localMxCertStatus" class="minor">Not loaded</span>
+          <small class="minor">Use Let's Encrypt or your own CA. Cert/key kept in memory only — never written to storage.</small>
+        </div>
+        <div class="row" style="margin-top: 0.75rem; gap: 0.5rem; flex-wrap: wrap;">
+          <button id="localMxStartBtn" class="pill" type="button" disabled>Start MX Node</button>
+          <button id="localMxStopBtn" class="pill" type="button" disabled>Stop MX Node</button>
+          <button id="localMxTestBtn" class="pill" type="button" disabled>Test Connectivity</button>
+          <span id="localMxStatus" class="pill pill--quiet" role="status" aria-live="polite">disabled</span>
+        </div>
+        <div class="warn" id="localMxWarn" role="note">
+          <span class="warn-tag">Exposes your IP</span>
+          <p>Running an MX node makes your server directly reachable on the public internet:</p>
+          <ul>
+            <li><strong>Your public IP and online times are visible</strong> to anyone connecting to your MX.</li>
+            <li><strong>Port 25 must be open</strong> on your router/firewall for inbound mail delivery.</li>
+            <li><strong>Metadata (From, To, Subject, Date) is visible</strong> to upstream/downstream MTAs even with PGP.</li>
+            <li><strong>TLS certificates</strong> are tied to your domain — use Let's Encrypt for automation.</li>
+          </ul>
+          <p class="warn-detail">
+            <strong>Recommended transport for public internet.</strong> When active, this MX node becomes the preferred path for Direct/80/443 TLS delivery, with military-grade hardening: TLS 1.3 only, certificate pinning, DANE/TLSA, MTA-STS, and rate limiting. Can also route through Tor, I2P, Nostr, Yggdrasil, Reticulum, WebRTC, BLE, DNS, Sneakernet, and Federation as additional transport layers.
+          </p>
+        </div>
+      </section>
 
       <!-- ---------- PGP ---------- -->
       <section class="opt" id="optPgp" aria-labelledby="optPgpTitle">
@@ -723,6 +784,132 @@
 </div>
 
 <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<!-- ============================ MX Node Install Wizard ============================ -->
+<div id="mxWizard" class="modal modal--solo" hidden>
+  <div class="solo" style="max-width: 48rem; max-height: 90vh; overflow: auto;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; padding-bottom: 1rem; border-bottom: 1px solid var(--line);">
+      <h2 style="margin: 0;">📧 MX Node Install Wizard</h2>
+      <button id="mxWizardClose" class="pill" type="button" style="padding: 0.25rem 0.5rem; font-size: 0.75rem;">Close</button>
+    </div>
+    <div id="mxWizardSteps">
+      <!-- Step 1: Prerequisites Check -->
+      <div class="mx-wizard-step" data-step="1">
+        <h3>Step 1: Prerequisites Check</h3>
+        <p class="minor">Verify your environment meets the requirements for running an MX Node.</p>
+        <div id="mxPrereqList" style="margin: 1rem 0;"></div>
+        <div class="row">
+          <button id="mxPrereqCheckBtn" class="pill pill--go" type="button">Check Prerequisites</button>
+          <button id="mxWizardNext1" class="pill" type="button" disabled>Next</button>
+        </div>
+      </div>
+      
+      <!-- Step 2: Domain & DNS Configuration -->
+      <div class="mx-wizard-step" data-step="2" hidden>
+        <h3>Step 2: Domain & DNS Configuration</h3>
+        <p class="minor">Configure your domain and verify DNS records.</p>
+        <div class="field">
+          <span>Domain Name</span>
+          <input id="mxWizardDomain" type="text" inputmode="text" spellcheck="false"
+                 placeholder="mail.yourdomain.tld" autocomplete="off">
+          <small class="minor">Enter the fully qualified domain name for your MX node.</small>
+        </div>
+        <div class="field">
+          <span>DNS Records Required</span>
+          <div id="mxDnsRecords" style="margin-top: 0.5rem; font-family: var(--mono); font-size: 0.8rem;"></div>
+        </div>
+        <div class="row">
+          <button id="mxWizardPrev2" class="pill" type="button">Back</button>
+          <button id="mxWizardCheckDnsBtn" class="pill" type="button">Check DNS</button>
+          <button id="mxWizardNext2" class="pill" type="button" disabled>Next</button>
+        </div>
+      </div>
+      
+      <!-- Step 3: TLS Certificate -->
+      <div class="mx-wizard-step" data-step="3" hidden>
+        <h3>Step 3: TLS Certificate</h3>
+        <p class="minor">Provide or generate a TLS certificate for your domain.</p>
+        <div class="field">
+          <label class="check"><input id="mxWizardUseLetsEncrypt" type="checkbox" checked>
+            Use Let's Encrypt (automatic, recommended)
+          </label>
+        </div>
+        <div class="field" id="mxWizardCustomCertFields" hidden>
+          <span>Certificate (PEM)</span>
+          <label class="pill pill--file">Select <input id="mxWizardCertFile" type="file" accept=".pem,.crt,.cert" hidden></label>
+          <span id="mxWizardCertStatus" class="minor">No file selected</span>
+        </div>
+        <div class="field" id="mxWizardCustomKeyFields" hidden>
+          <span>Private Key (PEM)</span>
+          <label class="pill pill--file">Select <input id="mxWizardKeyFile" type="file" accept=".pem,.key" hidden></label>
+          <span id="mxWizardKeyStatus" class="minor">No file selected</span>
+        </div>
+        <div class="row">
+          <button id="mxWizardPrev3" class="pill" type="button">Back</button>
+          <button id="mxWizardNext3" class="pill pill--go" type="button" disabled>Next</button>
+        </div>
+      </div>
+      
+      <!-- Step 4: Transport Selection -->
+      <div class="mx-wizard-step" data-step="4" hidden>
+        <h3>Step 4: Transport Layers</h3>
+        <p class="minor">Select additional transport layers for your MX Node.</p>
+        <div id="mxWizardTransports" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0;"></div>
+        <div class="row">
+          <button id="mxWizardPrev4" class="pill" type="button">Back</button>
+          <button id="mxWizardNext4" class="pill pill--go" type="button">Next</button>
+        </div>
+      </div>
+      
+      <!-- Step 5: Security Hardening -->
+      <div class="mx-wizard-step" data-step="5" hidden>
+        <h3>Step 5: Security Hardening</h3>
+        <p class="minor">Configure military-grade security settings.</p>
+        <div id="mxWizardSecurityOptions" style="display: flex; flex-direction: column; gap: 0.5rem; margin: 1rem 0;"></div>
+        <div class="row">
+          <button id="mxWizardPrev5" class="pill" type="button">Back</button>
+          <button id="mxWizardNext5" class="pill pill--go" type="button">Next</button>
+        </div>
+      </div>
+      
+      <!-- Step 6: Review & Install -->
+      <div class="mx-wizard-step" data-step="6" hidden>
+        <h3>Step 6: Review & Install</h3>
+        <p class="minor">Review your configuration and install the MX Node.</p>
+        <div id="mxWizardReview" style="font-family: var(--mono); font-size: 0.8rem; background: var(--bg); padding: 1rem; border-radius: var(--radius-sm); max-height: 40vh; overflow: auto;"></div>
+        <div class="row">
+          <button id="mxWizardPrev6" class="pill" type="button">Back</button>
+          <button id="mxWizardInstallBtn" class="pill pill--go" type="button">Install MX Node</button>
+        </div>
+      </div>
+      
+      <!-- Step 7: Post-Install -->
+      <div class="mx-wizard-step" data-step="7" hidden>
+        <h3>Step 7: Installation Complete</h3>
+        <div id="mxWizardResult" style="text-align: center; padding: 2rem;">
+          <div id="mxWizardSuccess" hidden>
+            <div style="font-size: 3rem; margin-bottom: 1rem;">✅</div>
+            <h3>MX Node Installed Successfully!</h3>
+            <p class="minor">Your mail server is now running.</p>
+          </div>
+          <div id="mxWizardError" hidden>
+            <div style="font-size: 3rem; margin-bottom: 1rem; color: #ff5a5a;">❌</div>
+            <h3>Installation Failed</h3>
+            <p class="minor" id="mxWizardErrorMsg"></p>
+          </div>
+          <div id="mxWizardInstalling" hidden>
+            <div style="font-size: 2rem; margin-bottom: 1rem;">⏳</div>
+            <h3>Installing...</h3>
+            <p class="minor" id="mxWizardInstallStatus">Please wait...</p>
+          </div>
+        </div>
+        <div class="row" style="justify-content: center;">
+          <button id="mxWizardFinishBtn" class="pill pill--go" type="button" hidden>Finish</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 
 <!-- Error display for JavaScript failures -->
 <div id="jsError" class="js-error" hidden role="alert">

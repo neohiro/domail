@@ -168,7 +168,13 @@ html[data-mode="dark"] body::before {
   white-space: nowrap;
   color: var(--fg);
 }
-.brand img { display: block; }
+.brand img { 
+  display: block; 
+  filter: var(--logo-filter, invert(0));
+  transition: filter var(--normal) var(--ease);
+}
+html[data-mode="dark"] .brand img { filter: invert(1); }
+html[data-mode="light"] .brand img { filter: invert(0); }
 
 /* --------------------- round switches --------------------- */
 
@@ -852,12 +858,110 @@ html[data-mode="light"] .round-knob { transform: translateX(38%); }
   .chrome-row--id .pill--quiet { display: none; }
   .editor { padding: var(--space-md); font-size: 1rem; }
   .addr-row { grid-template-columns: 3.5rem 1fr; }
+  
+  /* Mobile: bottom navigation instead of top tabs */
+  #chrome {
+    min-height: 60px;
+    padding: var(--space-xs) var(--space-sm);
+  }
+  .chrome-row:first-child {
+    display: none; /* Hide top tabs on mobile */
+  }
+  .chrome-row--id {
+    display: none; /* Hide identity row on mobile */
+  }
+  .tabs {
+    display: none; /* Hidden, replaced by bottom nav */
+  }
+  
+  /* Bottom navigation bar for mobile */
+  .mobile-bottom-nav {
+    display: flex !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: var(--z-chrome);
+    background: var(--card);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: var(--border-w) solid var(--line-solid);
+    padding: var(--space-xs) var(--space-sm) max(env(safe-area-inset-bottom), 12px);
+    justify-content: space-around;
+    align-items: center;
+    gap: var(--space-xs);
+  }
+  .mobile-bottom-nav .tab {
+    padding: var(--space-xs) var(--space-sm);
+    font-size: .7rem;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    flex: 1;
+    text-align: center;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    line-height: 1;
+  }
+  .mobile-bottom-nav .tab .count {
+    margin-left: 0;
+    margin-top: 2px;
+    font-size: .6rem;
+  }
+  .mobile-bottom-nav .tab .nav-icon {
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  .mobile-bottom-nav .tab .nav-label {
+    font-size: .6rem;
+  }
+  
+  /* Adjust view height for bottom nav */
+  #view {
+    height: calc(100dvh - 60px - 56px);
+  }
+  
+  /* Settings subtabs as horizontal scroll */
+  .subtabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .subtabs::-webkit-scrollbar { display: none; }
 }
 
 @media (max-width: 460px) {
   .tabs { font-size: .8rem; gap: var(--space-xs); }
   .tab { padding: var(--space-xs) var(--space-sm); }
   .round { --size: 2.2rem; }
+  
+  .mobile-bottom-nav .tab { font-size: .6rem; padding: var(--space-xs); }
+  .mobile-bottom-nav .tab .nav-label { display: none; } /* Icon only on very small screens */
+}
+
+/* Mobile bottom nav - hidden on desktop */
+.mobile-bottom-nav {
+  display: none;
+}
+
+/* Touch-optimized interactive elements */
+@media (hover: none) and (pointer: coarse) {
+  .tab, .subtab, .pill, .check input, .switch-track,
+  .format button, .format select, .field input, .field textarea,
+  .btn, button, [role="button"] {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  .tab { padding: var(--space-sm) var(--space-md); }
+  .subtab { padding: var(--space-sm) var(--space-md); }
+  .check { padding: var(--space-xs) 0; }
+  .vk-container button { min-width: 3rem; height: 3rem; }
+  
+  /* Larger touch targets for address fields */
+  .addr-row input { padding: var(--space-md); font-size: 1rem; }
+  .editor { font-size: 1.1rem; line-height: 1.8; }
 }
 
 /* --------------------- motion & contrast preferences --------------------- */

@@ -21,6 +21,11 @@ export class ScreenProtection {
       '[data-key]', '.contact .addr', '.msg .who', '.reader .meta'
     ];
     this.originalValues = new WeakMap();
+    this.respectShowFullIdentity = opts.respectShowFullIdentity || false;
+    this.getShowFullIdentity = opts.getShowFullIdentity || (() => false);
+    this._noiseCache = new Map(); // Use Map instead of WeakMap for cleanup
+    this._debounceTimer = null;
+    this._piiElements = new Set(); // Track obfuscated elements for reveal
   }
 
   async init() {
@@ -53,9 +58,6 @@ export class ScreenProtection {
           color: #666; font-size: 0.8rem; text-align: center; display: block; margin: 2rem;
         }
       }
-      @media screen and (max-width: 1px) {
-        [data-pii] { display: none !important; }
-      }
     `;
     document.head.appendChild(style);
     this.printStylesInjected = true;
@@ -64,39 +66,45 @@ export class ScreenProtection {
   _injectCanvasNoise() {
     if (typeof HTMLCanvasElement === 'undefined') return;
 
+    // Only protect canvases created by DOM Mail (marked with data-domail-canvas)
+    // This avoids breaking third-party libraries
     const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
     const originalToBlob = HTMLCanvasElement.prototype.toBlob;
     const originalGetImageData = CanvasRenderingContext2D.prototype.getImageData;
 
     const self = this;
-    const noiseCache = new WeakMap();
 
     function generateNoise(width, height) {
       const key = `${width}x${height}`;
-      if (noiseCache.has(key)) return noiseCache.get(key);
+      if (self._noiseCache.has(key)) return self._noiseCache.get(key);
       const tempCanvas = document.createElement('canvas');
       tempCanvas.width = width;
       tempCanvas.height = height;
       const ctx = tempCanvas.getContext('2d');
       const imageData = ctx.createImageData(width, height);
       const data = imageData.data;
-      const seed = crypto.getRandomValues(new Uint32Array(1))[0];
-      let state = seed;
+      // Use crypto.getRandomValues for cryptographically secure noise
+      const noiseBytes = new Uint8Array(data.length);
+      crypto.getRandomValues(noiseBytes);
       for (let i = 0; i < data.length; i += 4) {
-        state = (state * 1664525 + 1013904223) >>> 0;
-        const val = (state >> 16) & 0xFF;
+        const val = noiseBytes[i];
         data[i] = val;
         data[i + 1] = val;
         data[i + 2] = val;
-        data[i + 3] = Math.min(12, val & 0xF);
+        data[i + 3] = Math.min(12, noiseBytes[i + 3] & 0xF);
       }
       ctx.putImageData(imageData, 0, 0);
-      noiseCache.set(key, tempCanvas);
+      // Limit cache size to prevent unbounded growth
+      if (self._noiseCache.size > 50) {
+        const firstKey = self._noiseCache.keys().next().value;
+        self._noiseCache.delete(firstKey);
+      }
+      self._noiseCache.set(key, tempCanvas);
       return tempCanvas;
     }
 
     HTMLCanvasElement.prototype.toDataURL = function(type, quality) {
-      if (self.enabled && this.width > 0 && this.height > 0) {
+      if (self.enabled && this.width > 0 && this.height > 0 && this.dataset.domailCanvas === 'true') {
         const noiseCanvas = generateNoise(this.width, this.height);
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = this.width;
@@ -112,7 +120,7 @@ export class ScreenProtection {
     };
 
     HTMLCanvasElement.prototype.toBlob = function(callback, type, quality) {
-      if (self.enabled && this.width > 0 && this.height > 0) {
+      if (self.enabled && this.width > 0 && this.height > 0 && this.dataset.domailCanvas === 'true') {
         const noiseCanvas = generateNoise(this.width, this.height);
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = this.width;
@@ -129,7 +137,8 @@ export class ScreenProtection {
 
     CanvasRenderingContext2D.prototype.getImageData = function(sx, sy, sw, sh) {
       const result = originalGetImageData.call(this, sx, sy, sw, sh);
-      if (self.enabled && sw > 0 && sh > 0) {
+      const canvas = this.canvas;
+      if (self.enabled && sw > 0 && sh > 0 && canvas?.dataset?.domailCanvas === 'true') {
         const noiseCanvas = generateNoise(sw, sh);
         const noiseCtx = noiseCanvas.getContext('2d');
         const noiseData = noiseCtx.getImageData(0, 0, sw, sh).data;
@@ -148,11 +157,16 @@ export class ScreenProtection {
   _startPIIObfuscation() {
     if (this.obfuscationInterval) return;
     this._obfuscatePII();
-    this.obfuscationInterval = setInterval(() => this._obfuscatePII(), 2000 + Math.random() * 1000);
+    // Run less frequently (5-8s) using setInterval with jitter
+    // requestIdleCallback is not suitable for recurring intervals
+    this.obfuscationInterval = setInterval(() => {
+      this._obfuscatePII();
+    }, 5000 + Math.random() * 3000);
   }
 
   _obfuscatePII() {
     if (!this.enabled) return;
+    if (this.respectShowFullIdentity && this.getShowFullIdentity()) return;
     const doc = document;
     for (const selector of this.piiSelectors) {
       const elements = doc.querySelectorAll(selector);
@@ -166,6 +180,7 @@ export class ScreenProtection {
         if (this._containsPII(text)) {
           if (!this.originalValues.has(el)) {
             this.originalValues.set(el, text);
+            this._piiElements.add(el);
           }
           const obfuscated = this._obfuscateText(text);
           if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
@@ -195,37 +210,55 @@ export class ScreenProtection {
   }
 
   _revealPII() {
-    for (const [el, original] of this.originalValues) {
-      if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
-        el.value = original;
-      } else {
-        el.textContent = original;
+    // WeakMap is not iterable, so we need to track elements separately
+    // We'll use a Set to track elements that have been obfuscated
+    if (this._piiElements) {
+      for (const el of this._piiElements) {
+        if (!document.body.contains(el)) continue;
+        const original = this.originalValues.get(el);
+        if (original === undefined) continue;
+        if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+          el.value = original;
+        } else {
+          el.textContent = original;
+        }
+        el.dataset.piiProtected = 'false';
       }
-      el.dataset.piiProtected = 'false';
+      this._piiElements.clear();
     }
+    this.originalValues = new WeakMap();
   }
 
   _observeDOMChanges() {
     if (typeof MutationObserver === 'undefined') return;
     this.mutationObserver = new MutationObserver((mutations) => {
-      let shouldObfuscate = false;
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (node.nodeType === Node.ELEMENT_NODE) {
-            if (node.matches && this.piiSelectors.some(s => node.matches(s))) {
-              shouldObfuscate = true;
-            }
-            if (node.querySelectorAll) {
-              for (const sel of this.piiSelectors) {
-                if (node.querySelector(sel)) { shouldObfuscate = true; break; }
+      // Debounce: only trigger once per event loop
+      if (this._debounceTimer) return;
+      this._debounceTimer = setTimeout(() => {
+        this._debounceTimer = null;
+        let shouldObfuscate = false;
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (node.nodeType === Node.ELEMENT_NODE) {
+              if (node.matches && this.piiSelectors.some(s => node.matches(s))) {
+                shouldObfuscate = true;
+                break;
+              }
+              if (node.querySelectorAll) {
+                for (const sel of this.piiSelectors) {
+                  if (node.querySelector(sel)) { shouldObfuscate = true; break; }
+                }
+                if (shouldObfuscate) break;
               }
             }
           }
+          if (shouldObfuscate) break;
         }
-      }
-      if (shouldObfuscate) setTimeout(() => this._obfuscatePII(), 50);
+        if (shouldObfuscate) this._obfuscatePII();
+      }, 0);
     });
-    this.mutationObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+    // Don't observe characterData - too noisy
+    this.mutationObserver.observe(document.body, { childList: true, subtree: true });
   }
 
   _disableDevToolsShortcuts() {
@@ -241,28 +274,56 @@ export class ScreenProtection {
         return false;
       }
     }, true);
+
+    // Also block context menu on protected elements
+    document.addEventListener('contextmenu', (e) => {
+      if (!this.enabled) return;
+      if (e.target.closest('[data-pii], .identity, .address, .keyview, .reader')) {
+        e.preventDefault();
+      }
+    }, true);
   }
 
   _blockScreenCaptureAPIs() {
     if (typeof navigator === 'undefined') return;
 
+    // Block getDisplayMedia
     if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-      const original = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
+      this._originalGetDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
       navigator.mediaDevices.getDisplayMedia = async (constraints) => {
         if (this.enabled) {
           throw new DOMException('Screen capture blocked by DOM Mail privacy protection', 'NotAllowedError');
         }
-        return original(constraints);
+        return this._originalGetDisplayMedia(constraints);
       };
     }
 
     if (navigator.getDisplayMedia) {
-      const original = navigator.getDisplayMedia.bind(navigator);
+      this._originalGetDisplayMediaLegacy = navigator.getDisplayMedia.bind(navigator);
       navigator.getDisplayMedia = async (constraints) => {
         if (this.enabled) {
           throw new DOMException('Screen capture blocked', 'NotAllowedError');
         }
-        return original(constraints);
+        return this._originalGetDisplayMediaLegacy(constraints);
+      };
+    }
+
+    // Block canvas.captureStream
+    if (typeof HTMLCanvasElement !== 'undefined') {
+      this._originalCanvasCaptureStream = HTMLCanvasElement.prototype.captureStream;
+      HTMLCanvasElement.prototype.captureStream = function(...args) {
+        if (this.dataset.domailCanvas === 'true') {
+          throw new DOMException('Canvas capture blocked by DOM Mail privacy protection', 'NotAllowedError');
+        }
+        return this._originalCanvasCaptureStream.apply(this, args);
+      };
+    }
+
+    // Block HTMLMediaElement.captureStream
+    if (typeof HTMLMediaElement !== 'undefined') {
+      this._originalMediaCaptureStream = HTMLMediaElement.prototype.captureStream;
+      HTMLMediaElement.prototype.captureStream = function(...args) {
+        throw new DOMException('Media capture blocked by DOM Mail privacy protection', 'NotAllowedError');
       };
     }
   }
@@ -299,6 +360,30 @@ export class ScreenProtection {
       CanvasRenderingContext2D.prototype.getImageData = this.canvasFingerprintNoise.originalGetImageData;
       this.canvasFingerprintNoise = null;
     }
+    // Restore overridden capture APIs
+    if (this._originalGetDisplayMedia) {
+      navigator.mediaDevices.getDisplayMedia = this._originalGetDisplayMedia;
+      this._originalGetDisplayMedia = null;
+    }
+    if (this._originalGetDisplayMediaLegacy) {
+      navigator.getDisplayMedia = this._originalGetDisplayMediaLegacy;
+      this._originalGetDisplayMediaLegacy = null;
+    }
+    if (this._originalCanvasCaptureStream) {
+      HTMLCanvasElement.prototype.captureStream = this._originalCanvasCaptureStream;
+      this._originalCanvasCaptureStream = null;
+    }
+    if (this._originalMediaCaptureStream) {
+      HTMLMediaElement.prototype.captureStream = this._originalMediaCaptureStream;
+      this._originalMediaCaptureStream = null;
+    }
+    if (this._debounceTimer) {
+      clearTimeout(this._debounceTimer);
+      this._debounceTimer = null;
+    }
+    // Clean up noise cache
+    this._noiseCache.clear();
+    this._piiElements.clear();
     const printStyle = document.getElementById('domail-print-protection');
     if (printStyle) printStyle.remove();
     this.originalValues = new WeakMap();

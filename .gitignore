@@ -7,3 +7,5 @@ __pycache__/
 # Local CLI state (mail + headless settings); must never be committed.
 .domail-cli.json
 .domail-cli-config.json
+/.docdex/
+/.docdex-state/

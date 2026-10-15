@@ -19,6 +19,17 @@ export class AntiKeylogger {
     this.inputBuffer = [];
     this.noiseTimers = new Set();
     this._inputBufferMax = 100;
+    this.isMobile = this._detectMobile();
+    this._vkInputMode = new WeakMap(); // Store original inputmode per element
+  }
+
+  _detectMobile() {
+    if (typeof navigator === 'undefined') return false;
+    // Use feature detection + user agent as fallback
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const ua = navigator.userAgent || '';
+    const mobileUA = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    return hasTouch && mobileUA;
   }
 
   async init() {
@@ -26,15 +37,36 @@ export class AntiKeylogger {
     this.sessionSalt = crypto.getRandomValues(new Uint32Array(4));
     this._generateKeyMap();
     this._installGlobalProtections();
+    this._setupMobileVK();
     return this;
+  }
+
+  _setupMobileVK() {
+    if (!this.isMobile) return;
+
+    // Use pointerdown instead of focusin to avoid race with readonly
+    document.addEventListener('pointerdown', (e) => {
+      if (this._isProtectedField(e.target) && e.target.dataset.akProtected === 'true') {
+        // Only prevent default for touch/pen, not mouse
+        if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+          e.preventDefault();
+          this.createVirtualKeyboard(e.target);
+        }
+      }
+    }, { passive: false });
   }
 
   _generateKeyMap() {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/~`';
-    const shuffled = chars.split('').sort(() => (crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff) - 0.5);
+    const arr = chars.split('');
+    // Fisher-Yates shuffle (unbiased)
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
     this.keyMap = new Map();
     for (let i = 0; i < chars.length; i++) {
-      this.keyMap.set(chars[i], shuffled[i]);
+      this.keyMap.set(chars[i], arr[i]);
     }
   }
 
@@ -42,14 +74,11 @@ export class AntiKeylogger {
     if (!this.enabled) return;
 
     document.addEventListener('keydown', (e) => this._onKeyDown(e), true);
-    document.addEventListener('keyup', (e) => this._onKeyUp(e), true);
     document.addEventListener('copy', (e) => this._onCopy(e), true);
     document.addEventListener('cut', (e) => this._onCut(e), true);
     document.addEventListener('paste', (e) => this._onPaste(e), true);
 
     this._obfuscateAutofill();
-    // Note: _randomizeTiming() removed - wrapping global setTimeout breaks other code
-    // Timing noise is injected per-keystroke via _injectTimingNoise() instead
   }
 
   _onKeyDown(e) {
@@ -69,10 +98,6 @@ export class AntiKeylogger {
         this.inputBuffer.shift();
       }
     }
-  }
-
-  _onKeyUp(e) {
-    if (!this._isProtectedField(e.target)) return;
   }
 
   _onCopy(e) {
@@ -97,7 +122,31 @@ export class AntiKeylogger {
     if (text && this._looksLikePII(text)) {
       e.preventDefault();
       const masked = this._maskPII(text);
-      document.execCommand('insertText', false, masked);
+      this._insertTextAtCursor(e.target, masked);
+    }
+  }
+
+  _insertTextAtCursor(el, text) {
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      const start = el.selectionStart;
+      const end = el.selectionEnd;
+      const value = el.value;
+      el.value = value.slice(0, start) + text + value.slice(end);
+      el.selectionStart = el.selectionEnd = start + text.length;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    } else if (el.isContentEditable) {
+      // For contenteditable, use execCommand as fallback but prefer modern API
+      try {
+        document.execCommand('insertText', false, text);
+      } catch {
+        // Fallback for browsers without execCommand support
+        const sel = window.getSelection();
+        if (sel.rangeCount > 0) {
+          const range = sel.getRangeAt(0);
+          range.deleteContents();
+          range.insertNode(document.createTextNode(text));
+        }
+      }
     }
   }
 
@@ -125,6 +174,7 @@ export class AntiKeylogger {
 
   _obfuscateAutofill() {
     const style = document.createElement('style');
+    style.dataset.antikeyloggerAutofill = 'true';
     style.textContent = `
       input:-webkit-autofill,
       input:-webkit-autofill:hover,
@@ -143,18 +193,28 @@ export class AntiKeylogger {
   }
 
   _injectTimingNoise() {
-    const noise = Math.floor(Math.random() * 30) + 10;
-    const timer = setTimeout(() => {}, noise);
-    this.noiseTimers.add(timer);
-    setTimeout(() => this.noiseTimers.delete(timer), noise + 100);
+    // Use crypto.getRandomValues for jitter instead of busy-wait
+    // This adds entropy without blocking the event loop
+    // Rejection sampling to avoid modulo bias
+    let noise;
+    do {
+      noise = crypto.getRandomValues(new Uint32Array(1))[0];
+    } while (noise >= 0xFFFFFFF0); // 4294967280 = 30 * 143165576
+    noise = (noise % 30) + 10;
+    // Schedule a microtask that does nothing - adds timing variance
+    queueMicrotask(() => {});
   }
 
   _generateVKKeyMap() {
     const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{}|;:,.<>?/~`';
-    const shuffled = chars.split('').sort(() => (crypto.getRandomValues(new Uint32Array(1))[0] / 0xffffffff) - 0.5);
+    const arr = chars.split('');
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1);
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
     const keyMap = new Map();
     for (let i = 0; i < chars.length; i++) {
-      keyMap.set(chars[i], shuffled[i]);
+      keyMap.set(chars[i], arr[i]);
     }
     return keyMap;
   }
@@ -237,42 +297,38 @@ export class AntiKeylogger {
     return container;
   }
 
-  _getRandomizedLayout(type) {
-    const base = {
-      qwerty: [
-        ['q','w','e','r','t','y','u','i','o','p'],
-        ['a','s','d','f','g','h','j','k','l'],
-        ['z','x','c','v','b','n','m'],
-        ['Space', 'Backspace', 'Enter']
-      ],
-      dvorak: [
-        ['\'',',','.','p','y','f','g','c','r','l'],
-        ['a','o','e','u','i','d','h','t','n','s'],
-        [';','q','j','k','x','b','m','w','v','z'],
-        ['Space', 'Backspace', 'Enter']
-      ],
-      alphabetical: [
-        ['a','b','c','d','e','f','g','h','i','j'],
-        ['k','l','m','n','o','p','q','r','s','t'],
-        ['u','v','w','x','y','z'],
-        ['Space', 'Backspace', 'Enter']
-      ]
-    };
-    const layout = base[type] || base.qwerty;
-    return layout.map(row => row.map(k => ({
-      display: k === 'Space' ? '␣' : k === 'Backspace' ? '⌫' : k === 'Enter' ? '⏎' : k.toUpperCase(),
-      value: k === 'Space' ? ' ' : k === 'Backspace' ? 'Backspace' : k === 'Enter' ? 'Enter' : k
-    })));
-  }
-
   _vkInput(target, value) {
     if (!target) return;
     if (value === 'Backspace') {
-      document.execCommand('delete', false, null);
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+        const start = target.selectionStart;
+        const end = target.selectionEnd;
+        if (start !== end) {
+          const val = target.value;
+          target.value = val.slice(0, start) + val.slice(end);
+          target.selectionStart = target.selectionEnd = start;
+        } else if (start > 0) {
+          const val = target.value;
+          target.value = val.slice(0, start - 1) + val.slice(start);
+          target.selectionStart = target.selectionEnd = start - 1;
+        }
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (target.isContentEditable) {
+        document.execCommand('delete', false, null);
+      }
     } else if (value === 'Enter') {
-      document.execCommand('insertLineBreak', false, null);
+      if (target.tagName === 'INPUT') {
+        target.dispatchEvent(new Event('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+        target.dispatchEvent(new Event('keypress', { key: 'Enter', bubbles: true, cancelable: true }));
+        target.dispatchEvent(new Event('keyup', { key: 'Enter', bubbles: true, cancelable: true }));
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+      } else if (target.tagName === 'TEXTAREA') {
+        this._insertTextAtCursor(target, '\n');
+      } else if (target.isContentEditable) {
+        document.execCommand('insertLineBreak', false, null);
+      }
     } else {
-      document.execCommand('insertText', false, value);
+      this._insertTextAtCursor(target, value);
     }
     target.dispatchEvent(new Event('input', { bubbles: true }));
   }
@@ -286,18 +342,43 @@ export class AntiKeylogger {
     inputEl.setAttribute('autocapitalize', 'off');
     inputEl.setAttribute('data-ak-protected', 'true');
 
-    const showVK = opts.virtualKeyboard !== false && (inputEl.type === 'password' || opts.forceVK);
+    // Store original inputmode for restoration
+    this._vkInputMode.set(inputEl, inputEl.getAttribute('inputmode') || '');
+
+    const showVK = opts.virtualKeyboard !== false && (inputEl.type === 'password' || opts.forceVK || this.isMobile);
     if (showVK) {
       inputEl.addEventListener('focus', () => {
         if (!this.virtualKeyboard || !document.body.contains(this.virtualKeyboard)) {
           this.createVirtualKeyboard(inputEl);
         }
       });
+
+      if (this.isMobile) {
+        inputEl.addEventListener('pointerdown', (e) => {
+          if (e.pointerType === 'touch' || e.pointerType === 'pen') {
+            e.preventDefault();
+            if (!this.virtualKeyboard || !document.body.contains(this.virtualKeyboard)) {
+              this.createVirtualKeyboard(inputEl);
+            }
+          }
+        }, { passive: false });
+      }
+    }
+
+    // Timing noise for pointer events
+    if (this.isMobile) {
+      inputEl.addEventListener('pointerdown', () => this._injectTimingNoise(), { passive: true });
+      inputEl.addEventListener('pointerup', () => this._injectTimingNoise(), { passive: true });
     }
 
     inputEl.addEventListener('blur', () => {
       if (this.virtualKeyboard && !this.virtualKeyboard.contains(document.activeElement)) {
         setTimeout(() => { if (this.virtualKeyboard) this.virtualKeyboard.remove(); }, 200);
+      }
+      // Restore original inputmode
+      const originalMode = this._vkInputMode.get(inputEl);
+      if (originalMode !== undefined) {
+        inputEl.setAttribute('inputmode', originalMode);
       }
     });
 
@@ -335,6 +416,11 @@ export class AntiKeylogger {
     if (this.virtualKeyboard) this.virtualKeyboard.remove();
     this.keyMap = null;
     this.sessionSalt = null;
+    this._vkInputMode = new WeakMap();
+    this.inputBuffer = [];
+    // Remove autofill style if we added it
+    const autofillStyle = document.querySelector('style[data-antikeylogger-autofill]');
+    if (autofillStyle) autofillStyle.remove();
   }
 }
 
