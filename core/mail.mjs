@@ -903,7 +903,7 @@ export class MailEngine {
     const { headers, ...draftWithoutHeaders } = draft;
     const raw = buildMessage({
       ...draftWithoutHeaders,
-      from: this.identity,
+      from: draft.from || this.identity,
       date: new Date(this.now()),
       headers,
     });
@@ -936,6 +936,7 @@ export class MailEngine {
     ].map((a) => a.address);
     const loopback = recipients.filter((a) => this.isLocalAddress(a));
     if (loopback.length) await this.deliver({ ...parsed, raw });
+    if (typeof this.save === 'function') await this.save();
     return record;
   }
 
