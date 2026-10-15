@@ -195,7 +195,8 @@ export function parseAddressList(value) {
 }
 
 /** Render one address back to a header value. */
-export function formatAddress({ name, address }) {
+export function formatAddress(addr) {
+  const { name, address } = addr || {};
   const safeAddr = sanitizeHeaderValue(address);
   if (!name) return safeAddr;
   const safeName = sanitizeHeaderValue(name);
@@ -854,9 +855,9 @@ export class MailEngine {
   async deliver(envelope) {
     const message = typeof envelope === 'string' ? parseMessage(envelope) : envelope;
     const targets = [
-      ...message.to.map((a) => a.address),
-      ...message.cc.map((a) => a.address),
-      ...message.bcc.map((a) => a.address),
+      ...(message.to || []).map((a) => a.address),
+      ...(message.cc || []).map((a) => a.address),
+      ...(message.bcc || []).map((a) => a.address),
     ];
     const local = new Set(
       targets.filter((a) => this.isLocalAddress(a)).map((a) => a.toLowerCase()),
@@ -885,6 +886,7 @@ export class MailEngine {
       }
     }
     this.emit({ type: 'delivered', record });
+    if (typeof this.save === 'function') await this.save();
     return record;
   }
 

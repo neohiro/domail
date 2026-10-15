@@ -358,10 +358,23 @@ async function saveStore(store) {
   writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
 }
 
-function createEngine() {
+async function createEngine() {
   const store = loadStore();
   const engine = new MailEngine(store);
   engine.save = () => saveStore(store);
+  await engine.load();
+  // Auto-provision a minimal identity if none exists (for local delivery)
+  if (!engine.identity) {
+    await engine.setIdentity({
+      name: 'CLI User',
+      address: 'anonymous@domail.space',
+      local: 'anonymous',
+      domain: 'domail.space',
+      ed25519: '',
+      x25519: '',
+      created: Date.now(),
+    });
+  }
   return engine;
 }
 
@@ -633,7 +646,7 @@ showMessage(engine, id);
   rl.close();
 }
 
-const engine = createEngine();
+const engine = await createEngine();
 const [cmd, ...args] = process.argv.slice(2);
 
 if (!cmd || cmd === 'interactive') {

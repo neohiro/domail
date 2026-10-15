@@ -3621,10 +3621,8 @@ async function runPrereqChecks() {
   
   const checks = [
     { id: 'wasm', name: 'WebAssembly Support', check: () => typeof WebAssembly !== 'undefined' && typeof WebAssembly.instantiate === 'function' },
-    { id: 'crypto', name: 'WebCrypto API', check: () => window.crypto && window.crypto.subtle },
-    { id: 'https', name: 'HTTPS / Secure Context', check: () => window.isSecureContext },
-    { id: 'port25', name: 'Port 25 Reachability (test)', check: async () => { try { const r = await fetch('/api/check-port25'); return r.ok; } catch { return false; } } },
-    { id: 'dns', name: 'DNS Resolution', check: async () => { try { await fetch('/api/check-dns'); return true; } catch { return false; } } },
+    { id: 'crypto', name: 'WebCrypto API', check: () => !!(window.crypto && window.crypto.subtle) },
+    { id: 'https', name: 'HTTPS / Secure Context', check: () => !!window.isSecureContext },
   ];
   
   let html = '';
@@ -3657,7 +3655,7 @@ async function runPrereqChecks() {
     }
   }
   
-  if (passed >= 3) {
+  if (passed >= 2) {
     $('#mxWizardNext1').disabled = false;
   }
   
@@ -3688,28 +3686,16 @@ async function checkDnsRecords() {
     toast('Enter a domain first');
     return;
   }
-  
+
   const btn = $('#mxWizardCheckDnsBtn');
-  btn.textContent = 'Checking...';
+  btn.textContent = 'Manual';
   btn.disabled = true;
-  
-  try {
-    const response = await fetch(`https://dns.google/resolve?name=${domain}&type=MX`);
-    const data = await response.json();
-    
-    if (data.Answer && data.Answer.length > 0) {
-      toast(`✅ DNS records found for ${domain}`);
-      mxWizardState.prereqs.dns = true;
-      $('#mxWizardNext2').disabled = false;
-    } else {
-      toast(`⚠️ No MX records found for ${domain}`);
-    }
-  } catch (e) {
-    toast(`❌ DNS check failed: ${e.message}`);
-  } finally {
-    btn.textContent = 'Check DNS';
-    btn.disabled = false;
-  }
+  // Offline-only: never query third-party DNS. Operator publishes records shown.
+  toast('DNS setup is manual: publish the records shown for ' + domain);
+  mxWizardState.prereqs.dns = true;
+  $('#mxWizardNext2').disabled = false;
+  btn.textContent = 'Check DNS';
+  btn.disabled = false;
 }
 
 function populateTransports() {
@@ -3795,8 +3781,8 @@ Prerequisites:
   WASM: ${mxWizardState.prereqs.wasm ? '✅' : '❌'}
   Crypto: ${mxWizardState.prereqs.crypto ? '✅' : '❌'}
   HTTPS: ${mxWizardState.prereqs.https ? '✅' : '❌'}
-  Port 25: ${mxWizardState.prereqs.port25 ? '✅' : '❌'}
-  DNS: ${mxWizardState.prereqs.dns ? '✅' : '❌'}
+  Port 25: manual (operator verifies TCP/25)
+  DNS: manual (records shown above)
 `;
 }
 

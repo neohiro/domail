@@ -862,7 +862,6 @@ pub fn create_transport(config: TransportConfig) -> Result<Box<dyn Transport>> {
         "packet_radio" => Ok(Box::new(PacketRadioTransport::new(config))),
         "dns" => Ok(Box::new(DnsTransport::new(config))),
         "sneakernet" => Ok(Box::new(SneakernetTransport::new(config))),
-        "webrtc" => Ok(Box::new(WebRtcTransport::new(config))),
         "federation" => Ok(Box::new(FederationTransport::new(config))),
         _ => Err(TransportError::UnsupportedTransport(config.id).into()),
     }
