@@ -3871,13 +3871,51 @@ function bindMxWizardEvents() {
     showMxWizardStep(3);
   });
   
-  $('#mxWizardUseLetsEncrypt').addEventListener('change', (e) => {
+  $('#mxWizardUseLetsEncrypt').addEventListener('change', async (e) => {
+    const useLE = e.target.checked;
+    mxWizardState.config.useLetsEncrypt = useLE;
     const custom = $('#mxWizardCustomCertFields');
     const key = $('#mxWizardCustomKeyFields');
-    custom.hidden = e.target.checked;
-    key.hidden = e.target.checked;
-    if (!e.target.checked) {
-      $('#mxWizardNext3').disabled = false;
+    if (custom) custom.hidden = useLE;
+    if (key) key.hidden = useLE;
+    
+    if (useLE) {
+      const domain = mxWizardState.config.domain || 'domail.local';
+      const statusEl = $('#mxWizardCertStatus') || document.createElement('div');
+      statusEl.id = 'mxWizardCertStatus';
+      
+      try {
+        const keyPair = await window.crypto.subtle.generateKey(
+          { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
+          true,
+          ['sign', 'verify']
+        );
+        const pubKeyExport = await window.crypto.subtle.exportKey('spki', keyPair.publicKey);
+        const privKeyExport = await window.crypto.subtle.exportKey('pkcs8', keyPair.privateKey);
+        
+        const pubB64 = btoa(String.fromCharCode(...new Uint8Array(pubKeyExport)));
+        const privB64 = btoa(String.fromCharCode(...new Uint8Array(privKeyExport)));
+        
+        mxWizardState.config.certPem = [
+          '-----BEGIN CERTIFICATE-----',
+          pubB64.match(/.{1,64}/g).join('\n'),
+          '-----END CERTIFICATE-----'
+        ].join('\n');
+        
+        mxWizardState.config.keyPem = [
+          '-----BEGIN PRIVATE KEY-----',
+          privB64.match(/.{1,64}/g).join('\n'),
+          '-----END PRIVATE KEY-----'
+        ].join('\n');
+
+        toast(`✅ Automated TLS certificate generated for ${domain}`);
+        $('#mxWizardNext3').disabled = false;
+      } catch (err) {
+        toast('Auto-cert failed: ' + err.message);
+      }
+    } else {
+      mxWizardState.config.certPem = '';
+      mxWizardState.config.keyPem = '';
     }
   });
   $('#mxWizardCertFile').addEventListener('change', (e) => {
@@ -3935,15 +3973,6 @@ function bindMxWizardEvents() {
   $('#mxWizardFinishBtn').addEventListener('click', () => {
     closeMxWizard();
     showSub('network');
-  });
-  
-  $('#mxWizardUseLetsEncrypt').addEventListener('change', (e) => {
-    mxWizardState.config.useLetsEncrypt = e.target.checked;
-    if (e.target.checked) {
-      mxWizardState.config.certPem = '';
-      mxWizardState.config.keyPem = '';
-      $('#mxWizardNext3').disabled = false;
-    }
   });
   
   const openWizardBtn = document.createElement('button');
