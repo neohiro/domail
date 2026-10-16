@@ -3885,6 +3885,10 @@ function bindMxWizardEvents() {
       statusEl.id = 'mxWizardCertStatus';
       
       try {
+        if (!window.crypto || !window.crypto.subtle) {
+          throw new Error('WebCrypto unavailable');
+        }
+        // Self-signed local cert only — not a CA-issued cert. Custom PEM upload for real TLS.
         const keyPair = await window.crypto.subtle.generateKey(
           { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' },
           true,
@@ -3896,15 +3900,17 @@ function bindMxWizardEvents() {
         const pubB64 = btoa(String.fromCharCode(...new Uint8Array(pubKeyExport)));
         const privB64 = btoa(String.fromCharCode(...new Uint8Array(privKeyExport)));
         
+        const pubLines = (pubB64.match(/.{1,64}/g) || []).join('\n');
         mxWizardState.config.certPem = [
           '-----BEGIN CERTIFICATE-----',
-          pubB64.match(/.{1,64}/g).join('\n'),
+          pubLines,
           '-----END CERTIFICATE-----'
         ].join('\n');
         
+        const privLines = (privB64.match(/.{1,64}/g) || []).join('\n');
         mxWizardState.config.keyPem = [
           '-----BEGIN PRIVATE KEY-----',
-          privB64.match(/.{1,64}/g).join('\n'),
+          privLines,
           '-----END PRIVATE KEY-----'
         ].join('\n');
 
