@@ -755,6 +755,56 @@ if (!cmd || cmd === 'interactive') {
   }
 } else if (cmd === 'network') {
   networkCommand(loadConfig(), args[0], args[1]);
+} else if (cmd === 'mx-node') {
+  const sub = args[0] || 'status';
+  const { execFileSync } = await import('node:child_process');
+  const { existsSync, writeFileSync, mkdirSync } = await import('node:fs');
+  const base = fileURLToPath(new URL('..', import.meta.url));
+  const cargoBin = `${process.env.USERPROFILE || process.env.HOME || ''}\\.cargo\\bin`;
+
+  /**
+   * Run the native node. The built binary is used when it exists, so the
+   * common case needs no compiler at all; otherwise cargo builds it once.
+   */
+  function runMxNode(nodeArgs) {
+    const exe = 'mx-node.exe';
+    const release = `${base}/rust-mx-node/target/release/${exe}`;
+    const debug = `${base}/rust-mx-node/target/debug/${exe}`;
+    if (existsSync(release)) return execFileSync(release, nodeArgs, { encoding: 'utf8' });
+    if (existsSync(debug)) return execFileSync(debug, nodeArgs, { encoding: 'utf8' });
+    const cargo = `${cargoBin}/cargo.exe`;
+    const rustc = existsSync(cargo) ? cargo : 'cargo';
+    return execFileSync(rustc, ['run', '--quiet', '--manifest-path', `${base}/rust-mx-node/Cargo.toml`, '--bin', 'mx-node', '--', ...nodeArgs], { encoding: 'utf8' });
+  }
+
+  try {
+    if (sub === 'token') {
+      const token = runMxNode(['token']).trim();
+      console.log(`Token: ${token}`);
+      // The agent reads the token from here; the browser keeps its own copy.
+      const agentFile = `${base}/core/agent-token.json`;
+      writeFileSync(agentFile, JSON.stringify({ token }, null, 2));
+      console.log(`Saved for the agent at ${agentFile}`);
+    } else if (sub === 'status') {
+      const out = runMxNode(['status']).trim();
+      console.log(out);
+      console.log('Control API: http://127.0.0.1:8787/api/v1/health');
+    } else if (sub === 'install') {
+      console.log(runMxNode(['install']).trim());
+    } else if (sub === 'uninstall') {
+      console.log(runMxNode(['uninstall']).trim());
+    } else if (sub === 'start') {
+      console.log(runMxNode(['serve']).trim());
+    } else if (sub === 'doctor') {
+      console.log(runMxNode(['doctor']).trim());
+    } else {
+      console.log('Usage: domail mx-node [install|uninstall|start|status|token|doctor]');
+    }
+  } catch (e) {
+    console.error('MX node command failed:', e.message);
+    console.error('Build it once with: cargo build --release --manifest-path rust-mx-node/Cargo.toml');
+    process.exitCode = 1;
+  }
 } else if (cmd === 'vpn') {
   vpnCommand(loadConfig(), args[0], args[1]);
 } else {

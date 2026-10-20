@@ -2382,13 +2382,14 @@ async function startLocalMxNode() {
     el.localMxStartBtn.disabled = true;
 
     // Dynamic import of the WASM MX node module
-    const { createLocalMxNode } = await import('../../core/local-mx.mjs');
-    
+    const { createLocalMxNode } = await import('../../core/mx-node-client.mjs');
+    const token = localStorage.getItem('mx-node-token') || '';
     localMxNode = createLocalMxNode({
       hostname: uiPrefs.localMxHostname,
       certPem: uiPrefs.localMxCert,
       keyPem: uiPrefs.localMxKey,
       identity: engine?.identity,
+      token,
       onStatus: (status, detail) => {
         paintLocalMxStatus(status, detail);
       },
@@ -3817,11 +3818,18 @@ async function installMxNode() {
     
     $('#mxWizardInstallStatus').textContent = 'Loading MX Node module...';
     
-    const { createLocalMxNode } = await import('../../core/local-mx.mjs');
+    const { createLocalMxNode } = await import('../../core/mx-node-client.mjs');
+    const token = localStorage.getItem('mx-node-token') || mxWizardState.config.token || '';
     
-    $('#mxWizardInstallStatus').textContent = 'Initializing MX Node...';
+    $('#mxWizardInstallStatus').textContent = 'Connecting to native MX node...';
     
-    localMxNode = await createLocalMxNode(config);
+    localMxNode = await createLocalMxNode({
+      hostname: mxWizardState.config.domain,
+      certPem: mxWizardState.config.certPem,
+      keyPem: mxWizardState.config.keyPem,
+      identity: engine?.identity,
+      token,
+      onStatus: (status, detail) => {
     await localMxNode.start();
     
     uiPrefs.localMxEnabled = true;
