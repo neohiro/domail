@@ -221,6 +221,9 @@ impl StorageBackend for FileStorage {
 pub struct EncryptedStorage {
     backend: Arc<dyn StorageBackend>,
     master_key: MasterKey,
+    /// Serializes the read-modify-write cycles of the mailbox index so that
+    /// two deliveries that arrive at the same time cannot lose an entry.
+    index_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl EncryptedStorage {
@@ -228,6 +231,7 @@ impl EncryptedStorage {
         Self {
             backend,
             master_key,
+            index_lock: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
@@ -319,6 +323,23 @@ pub struct Attachment {
     pub inline: bool,
 }
 
+/// Lightweight index for mailbox listings so that a status check or a
+/// message list does not have to decrypt and deserialize every full message.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+struct MailboxIndex {
+    entries: Vec<MessageIndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct MessageIndexEntry {
+    id: String,
+    date: i64,
+    read: bool,
+    flagged: bool,
+    deleted: bool,
+    size: u64,
+}
+
 /// Mailbox storage
 #[derive(Clone)]
 pub struct MailboxStorage {
@@ -334,6 +355,85 @@ impl MailboxStorage {
         }
     }
 
+    /// Index file key — intentionally different from the message prefix so
+    /// `list_prefix` never picks it up as a message.
+    fn index_key(&self) -> String {
+        format!("mboxindex:{}:", self.mailbox())
+    }
+
+    async fn load_index(&self) -> Result<MailboxIndex> {
+        let index = self.load_index_unchecked().await?;
+
+        // The index is a cache, the messages are the truth. A crash between
+        // writing a message and writing the index leaves the two out of step,
+        // so the counts decide whether the index can be trusted.
+        let stored = self.storage.list_prefix(&self.prefix).await?.len();
+        if stored != index.entries.len() {
+            tracing::warn!(
+                stored,
+                indexed = index.entries.len(),
+                "the mailbox index is out of date, rebuilding it"
+            );
+            let rebuilt = self.rebuild_index().await?;
+            self.save_index(&rebuilt).await?;
+            return Ok(rebuilt);
+        }
+
+        Ok(index)
+    }
+
+    /// Read the index without checking it against the stored messages.
+    ///
+    /// The mutating paths use this because they change the number of stored
+    /// messages on purpose, which would always look like a mismatch.
+    async fn load_index_unchecked(&self) -> Result<MailboxIndex> {
+        let key = self.index_key();
+        match self.storage.get(&key).await? {
+            Some(data) => match bincode::deserialize::<MailboxIndex>(&data) {
+                Ok(index) => Ok(index),
+                Err(e) => {
+                    tracing::warn!(error = %e, "the mailbox index is unreadable, rebuilding it");
+                    let rebuilt = self.rebuild_index().await?;
+                    self.save_index(&rebuilt).await?;
+                    Ok(rebuilt)
+                }
+            },
+            None => {
+                let rebuilt = self.rebuild_index().await?;
+                self.save_index(&rebuilt).await?;
+                Ok(rebuilt)
+            }
+        }
+    }
+
+    async fn rebuild_index(&self) -> Result<MailboxIndex> {
+        let keys = self.storage.list_prefix(&self.prefix).await?;
+        let mut entries = Vec::with_capacity(keys.len());
+        for key in keys {
+            if let Some(data) = self.storage.get(&key).await? {
+                if let Ok(msg) = bincode::deserialize::<StoredMessage>(&data) {
+                    entries.push(MessageIndexEntry {
+                        id: msg.id,
+                        date: msg.date,
+                        read: msg.read,
+                        flagged: msg.flagged,
+                        deleted: msg.deleted,
+                        size: data.len() as u64,
+                    });
+                }
+            }
+        }
+        entries.sort_by(|a, b| b.date.cmp(&a.date));
+        Ok(MailboxIndex { entries })
+    }
+
+    async fn save_index(&self, index: &MailboxIndex) -> Result<()> {
+        let key = self.index_key();
+        let data =
+            bincode::serialize(index).map_err(|e| StorageError::Serialization(e.to_string()))?;
+        self.storage.set(&key, &data).await
+    }
+
     /// Mailbox this store is bound to.
     pub fn mailbox(&self) -> &str {
         self.prefix
@@ -345,7 +445,20 @@ impl MailboxStorage {
         let key = format!("{}{}", self.prefix, msg.id);
         let data =
             bincode::serialize(msg).map_err(|e| StorageError::Serialization(e.to_string()))?;
-        self.storage.put(&key, &data).await
+        self.storage.put(&key, &data).await?;
+        let _guard = self.storage.index_lock.lock().await;
+        let mut index = self.load_index_unchecked().await?;
+        index.entries.retain(|e| e.id != msg.id);
+        index.entries.push(MessageIndexEntry {
+            id: msg.id.clone(),
+            date: msg.date,
+            read: msg.read,
+            flagged: msg.flagged,
+            deleted: msg.deleted,
+            size: data.len() as u64,
+        });
+        index.entries.sort_by(|a, b| b.date.cmp(&a.date));
+        self.save_index(&index).await
     }
 
     pub async fn get(&self, id: &str) -> Result<Option<StoredMessage>> {
@@ -362,7 +475,11 @@ impl MailboxStorage {
 
     pub async fn delete(&self, id: &str) -> Result<()> {
         let key = format!("{}{}", self.prefix, id);
-        self.storage.delete(&key).await
+        self.storage.delete(&key).await?;
+        let _guard = self.storage.index_lock.lock().await;
+        let mut index = self.load_index_unchecked().await?;
+        index.entries.retain(|e| e.id != id);
+        self.save_index(&index).await
     }
 
     pub async fn list(
@@ -370,27 +487,20 @@ impl MailboxStorage {
         limit: Option<usize>,
         offset: Option<usize>,
     ) -> Result<Vec<StoredMessage>> {
-        let keys = self.storage.list_prefix(&self.prefix).await?;
-        let mut messages = Vec::with_capacity(keys.len());
-
-        for key in keys {
-            if let Some(data) = self.storage.take(&key).await? {
-                if let Ok(msg) = bincode::deserialize::<StoredMessage>(&data) {
-                    messages.push(msg);
-                }
-            }
-        }
-
-        // Sort by date descending (newest first)
-        messages.sort_by(|a, b| b.date.cmp(&a.date));
-
+        let index = self.load_index().await?;
+        let mut entries = index.entries;
         if let Some(offset) = offset {
-            messages.drain(..offset.min(messages.len()));
+            entries.drain(..offset.min(entries.len()));
         }
         if let Some(limit) = limit {
-            messages.truncate(limit);
+            entries.truncate(limit);
         }
-
+        let mut messages = Vec::with_capacity(entries.len());
+        for entry in entries {
+            if let Some(msg) = self.get(&entry.id).await? {
+                messages.push(msg);
+            }
+        }
         Ok(messages)
     }
 
@@ -399,8 +509,8 @@ impl MailboxStorage {
     }
 
     pub async fn count_unread(&self) -> Result<usize> {
-        let messages = self.list(None, None).await?;
-        Ok(messages.iter().filter(|m| !m.read).count())
+        let index = self.load_index().await?;
+        Ok(index.entries.iter().filter(|e| !e.read).count())
     }
 }
 
@@ -627,6 +737,7 @@ mod tests {
                     date,
                     read: false,
                     flagged: false,
+                    deleted: false,
                     raw: None,
                     encrypted: false,
                     attachments: vec![],
