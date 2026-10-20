@@ -1,12 +1,18 @@
 # DOM Mail
 
-A military-grade, zero-dependency, offline-first client-side mail engine that runs entirely in your browser tab or local CLI. No server, no account, no trace, no telemetry.
+A military-grade, zero-dependency, offline-first client-side mail engine. No required server, no account, no telemetry.
 
 ## What it is
 
 DOM Mail is a complete email client and local mail engine that lives in a single HTML page. It implements RFC 5322 message formatting, MIME multipart encoding, address parsing, cryptographic identity generation (WebCrypto Ed25519 & X25519), and end-to-end encrypted storage (Argon2id + XChaCha20-Poly1305) — all in vanilla JavaScript with zero external npm dependencies or CDN requests.
 
-Your mail never leaves your browser. There is no backend server, no cloud database, and no network connection beyond the initial page load (or cached forever via Service Worker).
+Mail is local by default, but it is **not** trapped in the outbox. DOM Mail has no mandatory backend, no cloud database and no telemetry, and the page itself never phones home. Getting a message off the machine is an explicit, user-driven choice, made through one of three routes:
+
+- the **transport vectors** below (Tor, I2P, Nostr, Yggdrasil, DNS tunneling, sneakernet, …), which speak the DOM Mail Bridge Protocol;
+- the **SMTP bridge** (`tools/smtp-bridge.mjs`), which hands the message to any ordinary ESMTP relay such as Gmail or Microsoft 365;
+- the **native MX node** (`rust-mx-node`), an optional Rust service that receives mail over real SMTP/IMAP and delivers it onward.
+
+The core engine stays network-free and dependency-free; only these opt-in edges perform I/O.
 
 ## Features & Security
 
@@ -17,16 +23,7 @@ Your mail never leaves your browser. There is no backend server, no cloud databa
 - **Zero Fingerprinting**: Spoofs browser APIs, canvas, WebGL, audio, and device properties to prevent tracking.
 - **Encrypted Storage**: Optional Argon2id passphrase derivation combined with XChaCha20-Poly1305 authenticated encryption.
 - **Enforced Content Security Policy**: A strict CSP ships as a `<meta>` tag (so it applies on GitHub Pages, which ignores `_headers`). `script-src 'self'` blocks inline script and `eval`; `connect-src 'self'` makes exfiltration to an external host impossible even under XSS; `object-src`, `frame-src`, `base-uri` and `form-action` are all locked to `none`. CI fails the build if an inline `<script>` is reintroduced. See [SECURITY.md](SECURITY.md).
-- **Multi-Network Accessibility & Concurrency**: Fully accessible, concurrent, and optimized across **13 transport vectors**, each with its own risk disclosure in **Settings → Network**:
-  - **HTTPS / Web**: `https://domail.space` (Direct Clearnet)
-  - **Tor Onion Service**: `http://domail.onion` (Tor v3 Hidden Service)
-  - **I2P Eepsite**: `http://domail.i2p` (Garlic-routed I2P tunnel)
-  - **Ethereum ENS / Decentralized Web**: `domail.eth` (IPFS gateway resolver)
-  - **IPFS / Radicle**: `ipfs://bafybeic...` & P2P code seeding (`rad://`)
-  - **Yggdrasil Mesh**: End-to-end encrypted IPv6 mesh overlay
-  - **Nostr Relay**: `wss://relay.domail.space` (Encrypted DMs via NIP-04/NIP-17)
-  - **Reticulum / LXMF**: Asynchronous LoRa and packet radio mesh mail
-  - **WebRTC P2P**, **BLE Proximity Mesh**, **DNS TXT Tunneling**, **USB/QR Sneakernet**, **ActivityPub/Matrix/XMPP Federation** bridges
+- **Multi-Network Accessibility**: 13 transport vectors, all toggled in **Settings → Network** (see Transport possibilities table above). `node cli/domail.mjs network [net] [on|off|info]` controls them from the CLI.
 - **Per-Vector Security Disclosures**: Every transport toggle in Settings expands to its own cybersecurity & anonymity warning (strength, risk tier, and mitigation). The CLI prints the same disclosures with `node cli/domail.mjs network help`.
 - **VPN Gateway & Clearnet Masking**: Settings → Network accepts a SOCKS5/HTTP/WireGuard endpoint or an uploaded `.conf`/`.ovpn`/`.json` config so public clearnet mail (for example an SMTP bridge toward Gmail/Outlook) egresses through a VPN IP instead of your real one. Wired in both the site and the CLI (`node cli/domail.mjs vpn ...`).
 - **Compose-Time Network Dispatcher**: A fine-grained checkbox selector in the compose workspace lets you choose precisely which active network transports to broadcast/dispatch your outgoing message through (e.g., Direct + Nostr + Reticulum simultaneously).
@@ -92,14 +89,49 @@ data can never be silently reinterpreted under a different scheme.
 Both features are wired into the CLI too (`node cli/domail.mjs pgp on`,
 `node cli/domail.mjs relay on`), so the headless and site builds behave alike.
 
+## Transport possibilities
+
+Every vector is a toggle in **Settings → Network**, a flag in the CLI config, and
+a line in `node cli/domail.mjs network help` — one table, shared by the browser
+and the CLI so the two never drift. `direct` is the only one enabled by
+default; the rest are off until you switch them on and accept the disclosure.
+
+| id | Vector | Risk | Max message | Notes |
+|---|---|---|---|---|
+| `direct` | Direct clearnet (80/443) | High | unlimited | Universal reach; your real IP and a loggable envelope. |
+| `tor` | Tor onion service (`.onion`) | Low | 1 MB | Strong anonymity; correlation risk if mixed with clearnet in one session. |
+| `i2p` | I2P eepsite (`.i2p`) | Low | 512 KB | Garlic-routed P2P; slow bootstrap, leaky if the router is misconfigured. |
+| `ens` | Ethereum ENS / IPFS | Medium | 1 MB | Censorship-resistant immutable addressing; gateway operators see your IP. |
+| `radicle` | Radicle P2P code seed | Low | 1 MB | Sovereign forge; peer gossip exposes node identity unless wrapped. |
+| `yggdrasil` | Yggdrasil IPv6 mesh | Low | 256 KB | E2E-encrypted mesh routing, no DNS; peers observe the overlay path. |
+| `nostr` | Nostr relay sync (`wss://`) | Medium | 64 KB | NIP-04/17 store-and-forward DMs; relays are untrusted buffers. |
+| `reticulum` | Reticulum / LXMF LoRa | Low | 16 KB | Works with no internet at all; radio direction-finding can locate a transmitter. |
+| `webrtc` | WebRTC data channels | Medium | 1 MB | Direct browser-to-browser; ICE candidates can leak local/public IPs. |
+| `ble` | Bluetooth LE mesh | Medium | 1 MB | Air-gapped proximity exchange; advertising addresses are trackable over time. |
+| `dns` | DNS TXT / CNAME tunnel | High | 1 MB | Escapes DNS-only firewalls; resolvers log every query, DPI fingerprints it. |
+| `sneakernet` | USB / QR sneakernet | Minimal | 1 MB | Nothing touches a network; only physical custody and QR shoulder-surfing. |
+| `federation` | ActivityPub / Matrix / XMPP | Medium | 1 MB | Broad reach through open federated networks; servers retain metadata. |
+
+The size ceilings are enforced by `TRANSPORT_MAX_SIZE` in `core/mail.mjs`, and
+the engine compresses (and, where the vector requires it, splits) a body that
+exceeds them. `dispatchMultiplex()` broadcasts one message over every active
+vector at once — you pick the set in the compose workspace.
+
+Peer-to-peer vectors exchange a length-prefixed JSON frame carrying the
+envelope plus the raw message (the *DOM Mail Bridge Protocol*, 8 MiB frame cap).
+The native node implements the same framing in `rust-mx-node/src/transport/bridge.rs`.
+
 ## Can I send to a Gmail or Outlook account?
 
-**Yes — via the SMTP bridge, not from raw DOM Mail alone.** The DOM Mail engine
-is deliberately network-free: a message you "send" is written to the local
-Outbox and a copy is looped to the Inbox. To reach a real clearnet mailbox the
-message must be handed to an ESMTP relay. That is exactly what
-`tools/smtp-bridge.mjs` does, using the shared engine's `smtpSubmit()`, so the
-server-side protocol logic stays 100 % inside the common codebase.
+**Yes.** There are two ways to leave the building, and both are real delivery
+paths, not simulations:
+
+1. **SMTP bridge** — hand the message to any ordinary ESMTP relay.
+2. **Native MX node** — run the Rust node as an OS service and let it accept
+   mail over real SMTP/IMAP/Submission and deliver it onward.
+
+The SMTP bridge uses the shared engine's `smtpSubmit()`, so the server-side
+protocol logic stays 100 % inside the common codebase.
 
 ```bash
 SMTP_USER=me@example.com SMTP_PASS=APP_PASSWORD \
@@ -159,7 +191,7 @@ Turn it off in **Settings → Privacy → Show full addresses**, or with
 ## Testing
 
 ```bash
-npm test     # 98 unit tests: engine, MIME, armor, crypto, relay, SMTP bridge
+npm test     # 117 unit tests: engine, MIME, armor, crypto, relay, SMTP bridge
 npm run smoke  # boots the real page in headless Chrome and drives it
 ```
 
@@ -176,6 +208,46 @@ shipping.
 2. A secure mail identity is automatically provisioned.
 3. Compose and send messages instantly. All data persists locally in IndexedDB.
 
+## Native MX node (optional)
+
+The `rust-mx-node/` crate is an optional native OS service. It does **not**
+replace the browser/CLI — it complements them: the browser/app can talk to
+it through the loopback control API (`core/mx-node-client.mjs`) so the wizard
+drives a real service instead of loading a broken WASM stub.
+
+Capabilities:
+- SMTP / Submission / IMAP servers (`smtp.rs`, `submission.rs`, `imap.rs`)
+- 7 transport modules (`transport/direct.rs`, `dns.rs`, `ens.rs`,
+  `federation.rs`, `nostr.rs`, `sneakernet.rs`, `bridge.rs`)
+- Mailbox index (`MailboxIndex`) for fast `STATUS` / `UNSEEN`
+- Configurable TLS (implicit on 465/993; STARTTLS on 587/143)
+- `IMAP STORE / EXPUNGE`; `StoredMessage` with `deleted` flag
+- Control API (`control.rs`): bearer token auth, loopback-only,
+  constant-time comparison, no CORS, `public_config()` redacts secrets
+- Service commands (`service.rs`): `install` / `start` / `stop` / `status`
+- CLI automation (`cli/domail.mjs mx-node [install|start|status|token|doctor]`)
+- Agent MCP (`mcp/domail-mcp.mjs`): `mx_node_status`, `mx_node_start`
+- Browser wizard: reads `localStorage.getItem('mx-node-token')` and passes
+  it to `createLocalMxNode()`
+
+Caveats / build notes:
+- Windows: needs MSVC `link.exe` (Visual Studio Build Tools). The
+  GNU `link.exe` 8.32 from Git for Windows is incompatible with
+  `x86_64-pc-windows-msvc`; build is blocked at that stage, not in source.
+- `rustc --emit=metadata` parses clean; `cargo fmt` clean; `profile.wasm`
+  needs `inherits = "release"`; `SmtpConfig` / `ImapConfig` use
+  `implicit_tls_bind` for 465/993.
+- No CORS preflight answers (deliberate: only pages that know the token talk
+  back). CSP `connect-src 'self'` is sufficient for same-origin; loopback
+  (`127.0.0.1`) requires the page to know the token, which is exactly the
+  pairing mechanism.
+- Token persistence is manual: the CLI saves it to `core/agent-token.json`
+  (`domail mx-node token`); the browser saves it to `localStorage`. There is
+  no automatic sync between the two; an agent should read the JSON file, a
+  browser should read localStorage.
+- The legacy `core/local-mx.mjs` WASM stub is superseded by
+  `core/mx-node-client.mjs`; `local-mx.mjs` is removed from `main`.
+
 ## Architecture
 
 ```
@@ -189,7 +261,11 @@ domail/
 │   ├── fingerprinting.mjs    # Browser fingerprint spoofing
 │   ├── pgp.mjs               # Optional: OpenPGP-style armor + X25519 sealing
 │   ├── relay.mjs             # Optional: opt-in WebSocket relay client
-│   └── domains.mjs           # Cyberpunk & hacker domain culture generator
+│   ├── domains.mjs           # Cyberpunk & hacker domain culture generator
+│   ├── mx-node-client.mjs    # Native control-API client (replaces broken WASM stub)
+│   └── agent-token.json      # Secret bearer token (gitignored, manual pairing)
+├── mcp/
+│   └── domail-mcp.mjs        # Agent MCP server (stdio JSON-RPC 2.0, zero-deps)
 ├── assets/
 │   ├── css/domail.css        # Futuristic CSS custom property theming
 │   ├── js/boot.js            # Pre-paint theme, SW registration, libsodium loader
@@ -197,20 +273,21 @@ domail/
 │   ├── js/domail.js          # Browser app controller & UI wiring
 │   └── img/logo.svg          # SVG vector logo
 ├── cli/
-│   └── domail.mjs            # Node.js CLI (ASCII inbox, network, vpn)
+│   └── domail.mjs            # Node.js CLI (ASCII inbox, network, vpn, mx-node)
 ├── tools/
 │   ├── smoke.mjs             # Headless-Chrome boot + drive smoke test
 │   └── smtp-bridge.mjs       # Zero-dep ESMTP/SOCKS5 bridge to real mailboxes
 ├── test/
 │   ├── core.test.mjs         # 52 engine/MIME tests
-│   ├── optional.test.mjs     # 38 armor, crypto and relay tests
-│   └── smtp.test.mjs         # 2 loopback SMTP integration tests
+│   ├── optional.test.mjs     # 62 armor, crypto and relay tests
+│   └── smtp.test.mjs         # 3 loopback SMTP integration tests
 ├── docker-compose.yml        # "kernel" host: Tor, I2P, Nostr, Yggdrasil,
 │                             #   Radicle, IPFS, Reticulum, VPN egress
 ├── Caddyfile                 # Caddy origin + Nostr relay proxy
 ├── index.html                # App entry point
 ├── sw.js                     # Service Worker for offline-first caching
-└── manifest.webmanifest      # PWA manifest
+├── manifest.webmanifest      # PWA manifest
+└── rust-mx-node/             # Optional native Rust MX node (OS service)
 ```
 
 ## License
