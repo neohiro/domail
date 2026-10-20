@@ -8,6 +8,7 @@
     "test": "node --test test/*.test.mjs",
     "smoke": "node tools/smoke.mjs",
     "verify": "npm test && npm run smoke",
+    "mcp": "node mcp/domail-mcp.mjs",
     "cli": "node cli/domail.mjs"
   },
   "bin": {

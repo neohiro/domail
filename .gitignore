@@ -9,3 +9,12 @@ __pycache__/
 .domail-cli-config.json
 /.docdex/
 /.docdex-state/
+
+# Native MX node build artifacts.
+rust-mx-node/target/
+
+# Control API token for the agent (secret, must never be committed).
+core/agent-token.json
+
+# Temporary probe files.
+core/probe-tmp.mjs
