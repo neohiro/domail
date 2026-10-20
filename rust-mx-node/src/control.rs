@@ -114,7 +114,11 @@ impl ControlServer {
     pub async fn serve(self) -> Result<()> {
         let listener = match self.listener.lock().await.take() {
             Some(listener) => listener,
-            None => return Err(MxNodeError::InvalidState("the server was not started".into())),
+            None => {
+                return Err(MxNodeError::InvalidState(
+                    "the server was not started".into(),
+                ))
+            }
         };
 
         let handler: Arc<dyn Handler> = Arc::new(ControlHandler {
@@ -219,11 +223,15 @@ impl Handler for ControlHandler {
             ("GET", "/api/v1/service") => {
                 let status = crate::service::status(&self.context.config.service);
                 match status {
-                    Ok(status) => HttpResponse::json(200, json!({
-                        "installed": status.installed,
-                        "running": status.running,
-                        "kind": status.kind,
-                    }).to_string()),
+                    Ok(status) => HttpResponse::json(
+                        200,
+                        json!({
+                            "installed": status.installed,
+                            "running": status.running,
+                            "kind": status.kind,
+                        })
+                        .to_string(),
+                    ),
                     Err(e) => HttpResponse::json(500, json!({"error": e.to_string()}).to_string()),
                 }
             }
@@ -248,10 +256,9 @@ impl Handler for ControlHandler {
                     }
                 }
             }
-            ("GET", _) | ("POST", _) => HttpResponse::json(
-                404,
-                json!({"error": "unknown endpoint"}).to_string(),
-            ),
+            ("GET", _) | ("POST", _) => {
+                HttpResponse::json(404, json!({"error": "unknown endpoint"}).to_string())
+            }
             _ => HttpResponse::json(
                 405,
                 json!({"error": "the method is not allowed"}).to_string(),
@@ -272,9 +279,7 @@ impl ControlHandler {
         let result = match action {
             "activate" => self.context.transports.activate(&id).await,
             "deactivate" => self.context.transports.deactivate(&id).await,
-            _ => {
-                return HttpResponse::json(404, json!({"error": "unknown endpoint"}).to_string())
-            }
+            _ => return HttpResponse::json(404, json!({"error": "unknown endpoint"}).to_string()),
         };
 
         match result {

@@ -121,10 +121,7 @@ impl EnsTransport {
     }
 
     async fn eth_call(&self, to: &str, selector: &str, node: &[u8; 32]) -> Result<Vec<u8>> {
-        let client = self
-            .client
-            .as_ref()
-            .ok_or(TransportError::NotConnected)?;
+        let client = self.client.as_ref().ok_or(TransportError::NotConnected)?;
 
         let mut data = String::from(selector);
         for byte in node {
@@ -145,10 +142,9 @@ impl EnsTransport {
             .await
             .map_err(|e| TransportError::ConnectionFailed(format!("ENS RPC failed: {e}")))?;
 
-        let body: RpcResponse = response
-            .json()
-            .await
-            .map_err(|e| TransportError::ConnectionFailed(format!("ENS RPC response invalid: {e}")))?;
+        let body: RpcResponse = response.json().await.map_err(|e| {
+            TransportError::ConnectionFailed(format!("ENS RPC response invalid: {e}"))
+        })?;
 
         if let Some(error) = body.error {
             return Err(TransportError::ConnectionFailed(format!(
@@ -163,8 +159,9 @@ impl EnsTransport {
             .ok_or_else(|| TransportError::ConnectionFailed("ENS RPC returned no result".into()))?;
 
         let hex = result.trim_start_matches("0x");
-        let bytes = hex_decode(hex)
-            .ok_or_else(|| TransportError::ConnectionFailed("ENS RPC returned invalid hex".into()))?;
+        let bytes = hex_decode(hex).ok_or_else(|| {
+            TransportError::ConnectionFailed("ENS RPC returned invalid hex".into())
+        })?;
         Ok(bytes)
     }
 
@@ -172,14 +169,19 @@ impl EnsTransport {
     pub async fn resolve(&self, name: &str) -> Result<String> {
         let node = Self::namehash(name);
 
-        let resolver_bytes = self.eth_call(&self.registry, SELECTOR_RESOLVER, &node).await?;
+        let resolver_bytes = self
+            .eth_call(&self.registry, SELECTOR_RESOLVER, &node)
+            .await?;
         if resolver_bytes.len() < 20 {
             return Err(TransportError::NotConfigured(format!(
                 "ENS name '{name}' has no resolver"
             ))
             .into());
         }
-        let resolver = format!("0x{}", hex_encode(&resolver_bytes[resolver_bytes.len() - 20..]));
+        let resolver = format!(
+            "0x{}",
+            hex_encode(&resolver_bytes[resolver_bytes.len() - 20..])
+        );
 
         let address_bytes = self.eth_call(&resolver, SELECTOR_ADDR, &node).await?;
         if address_bytes.len() < 20 {
@@ -290,8 +292,8 @@ impl Transport for EnsTransport {
         }
 
         let message = BridgeMessage::new(envelope, payload);
-        let encoded = serde_json::to_vec(&message)
-            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        let encoded =
+            serde_json::to_vec(&message).map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
         let Some(connection) = self.connection.as_mut() else {
             return Err(TransportError::NotConnected.into());

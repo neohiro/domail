@@ -28,7 +28,10 @@ const COMMANDS: &[(&str, &str)] = &[
     ("uninstall", "remove the operating system service"),
     ("status", "show the state of the operating system service"),
     ("token", "print the token of the control API"),
-    ("hash-password", "hash a password for the configuration file"),
+    (
+        "hash-password",
+        "hash a password for the configuration file",
+    ),
     ("doctor", "check the installation and report problems"),
     ("config", "print the effective configuration"),
     ("help", "show this text"),
@@ -155,12 +158,18 @@ fn apply_domain(config: &mut MxNodeConfig, arguments: &[String]) -> Result<(), S
                 let value = arguments
                     .get(index + 1)
                     .ok_or_else(|| "--domain needs a name".to_string())?;
+                if value.trim().is_empty() {
+                    return Err("--domain needs a name".to_string());
+                }
                 config.domain = value.clone();
                 config.hostname = value.clone();
                 index += 2;
             }
             other if other.starts_with("--domain=") => {
                 let value = other["--domain=".len()..].to_string();
+                if value.trim().is_empty() {
+                    return Err("--domain needs a name".to_string());
+                }
                 config.domain = value.clone();
                 config.hostname = value.clone();
                 index += 1;
@@ -239,7 +248,9 @@ async fn serve_node(config: MxNodeConfig, mut stop: watch::Receiver<bool>) -> Re
         Some(tls::acceptor(&config.cert_pem, &config.key_pem).map_err(|e| e.to_string())?)
     };
 
-    let backend = create_storage(&config.storage).await.map_err(|e| e.to_string())?;
+    let backend = create_storage(&config.storage)
+        .await
+        .map_err(|e| e.to_string())?;
     let key_path = Path::new(&config.storage.db_path).join("master.key");
     let master_key = load_or_create_master_key(&key_path).map_err(|e| e.to_string())?;
     let storage = Arc::new(EncryptedStorage::new(backend, master_key));

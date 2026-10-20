@@ -224,7 +224,11 @@ impl ImapServer {
     pub async fn serve(self) -> Result<()> {
         let listener = match self.listener.lock().await.take() {
             Some(listener) => listener,
-            None => return Err(MxNodeError::InvalidState("the server was not started".into())),
+            None => {
+                return Err(MxNodeError::InvalidState(
+                    "the server was not started".into(),
+                ))
+            }
         };
         let implicit = self.implicit.lock().await.take();
 
@@ -311,7 +315,12 @@ impl ImapServer {
 
     /// Address the server is bound to, if it is running.
     pub async fn local_addr(&self) -> Option<SocketAddr> {
-        self.listener.lock().await.as_ref().map(|l| l.local_addr().ok()).flatten()
+        self.listener
+            .lock()
+            .await
+            .as_ref()
+            .map(|l| l.local_addr().ok())
+            .flatten()
     }
 }
 
@@ -545,7 +554,9 @@ impl Session {
             }
 
             let (verb, args) = split_command(&rest);
-            let keep_open = self.dispatch(&tag, &verb.to_ascii_uppercase(), &args).await?;
+            let keep_open = self
+                .dispatch(&tag, &verb.to_ascii_uppercase(), &args)
+                .await?;
             if !keep_open {
                 break;
             }
@@ -557,19 +568,25 @@ impl Session {
 
     /// Send a tagged OK response.
     async fn ok(&mut self, tag: &str, text: &str) -> Result<()> {
-        self.stream.write_line(&format!("{} OK {}", tag, text)).await?;
+        self.stream
+            .write_line(&format!("{} OK {}", tag, text))
+            .await?;
         Ok(())
     }
 
     /// Send a tagged NO response.
     async fn no(&mut self, tag: &str, text: &str) -> Result<()> {
-        self.stream.write_line(&format!("{} NO {}", tag, text)).await?;
+        self.stream
+            .write_line(&format!("{} NO {}", tag, text))
+            .await?;
         Ok(())
     }
 
     /// Send a tagged BAD response.
     async fn bad(&mut self, tag: &str, text: &str) -> Result<()> {
-        self.stream.write_line(&format!("{} BAD {}", tag, text)).await?;
+        self.stream
+            .write_line(&format!("{} BAD {}", tag, text))
+            .await?;
         Ok(())
     }
 
@@ -578,12 +595,7 @@ impl Session {
         // Without TLS the server only answers the commands that do not
         // expose mailbox data.
         let needs_tls = self.context.config.require_tls && !self.stream.is_tls();
-        if needs_tls
-            && !matches!(
-                verb,
-                "CAPABILITY" | "NOOP" | "LOGOUT" | "STARTTLS" | "IDLE"
-            )
-        {
+        if needs_tls && !matches!(verb, "CAPABILITY" | "NOOP" | "LOGOUT" | "STARTTLS" | "IDLE") {
             self.no(tag, "[PRIVACYREQUIRED] TLS is required").await?;
             return Ok(true);
         }
@@ -639,17 +651,23 @@ impl Session {
     /// Handle the `LOGIN` command.
     async fn handle_login(&mut self, tag: &str, args: &str) -> Result<()> {
         if self.state != SessionState::Anonymous {
-            self.bad(tag, "The session is already authenticated").await?;
+            self.bad(tag, "The session is already authenticated")
+                .await?;
             return Ok(());
         }
 
         let tokens = tokenize(args);
         if tokens.len() < 2 {
-            self.bad(tag, "LOGIN needs a user name and a password").await?;
+            self.bad(tag, "LOGIN needs a user name and a password")
+                .await?;
             return Ok(());
         }
 
-        match self.context.credentials.authenticate(&tokens[0], &tokens[1]) {
+        match self
+            .context
+            .credentials
+            .authenticate(&tokens[0], &tokens[1])
+        {
             Some(user) => {
                 self.user = Some(user);
                 self.state = SessionState::Authenticated;
@@ -664,7 +682,8 @@ impl Session {
     /// Handle the `AUTHENTICATE` command.
     async fn handle_authenticate(&mut self, tag: &str, args: &str) -> Result<()> {
         if self.state != SessionState::Anonymous {
-            self.bad(tag, "The session is already authenticated").await?;
+            self.bad(tag, "The session is already authenticated")
+                .await?;
             return Ok(());
         }
 
@@ -792,7 +811,9 @@ impl Session {
         self.read_only = verb == "EXAMINE";
 
         let count = self.messages.len();
-        self.stream.write_line(&format!("* {} EXISTS", count)).await?;
+        self.stream
+            .write_line(&format!("* {} EXISTS", count))
+            .await?;
         self.stream.write_line("* 0 RECENT").await?;
         self.stream
             .write_line("* OK [UIDVALIDITY 1] The UIDs are valid")
@@ -905,10 +926,7 @@ impl Session {
         let set_flagged = flags.contains("\\flagged");
         let set_deleted = flags.contains("\\deleted");
 
-        let mailbox = self
-            .mailbox
-            .clone()
-            .unwrap_or_else(|| "INBOX".to_string());
+        let mailbox = self.mailbox.clone().unwrap_or_else(|| "INBOX".to_string());
         let storage = self.context.storage.clone();
         let store = MailboxStorage::new((*storage).clone(), &mailbox);
 
@@ -932,11 +950,7 @@ impl Session {
             store.save(&message).await?;
             self.messages[index] = message.clone();
 
-            let line = format!(
-                "* {} FETCH (FLAGS ({}))",
-                index + 1,
-                format_flags(&message)
-            );
+            let line = format!("* {} FETCH (FLAGS ({}))", index + 1, format_flags(&message));
             self.stream.write_line(&line).await?;
         }
 
@@ -955,10 +969,7 @@ impl Session {
             return Ok(());
         }
 
-        let mailbox = self
-            .mailbox
-            .clone()
-            .unwrap_or_else(|| "INBOX".to_string());
+        let mailbox = self.mailbox.clone().unwrap_or_else(|| "INBOX".to_string());
         let storage = self.context.storage.clone();
         let store = MailboxStorage::new((*storage).clone(), &mailbox);
 
@@ -1068,10 +1079,7 @@ impl Session {
         }
 
         if !self.read_only {
-            let mailbox = self
-                .mailbox
-                .clone()
-                .unwrap_or_else(|| "INBOX".to_string());
+            let mailbox = self.mailbox.clone().unwrap_or_else(|| "INBOX".to_string());
             let storage = self.context.storage.clone();
             let store = MailboxStorage::new((*storage).clone(), &mailbox);
 

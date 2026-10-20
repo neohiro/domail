@@ -128,7 +128,9 @@ mod tests {
         });
         let store = CredentialStore::from_config(&config);
 
-        let user = store.authenticate("alice", "s3cret").expect("authenticated");
+        let user = store
+            .authenticate("alice", "s3cret")
+            .expect("authenticated");
         assert_eq!(user.username, "alice");
         assert!(store.authenticate("alice", "nope").is_none());
         assert!(store.authenticate("bob", "s3cret").is_none());

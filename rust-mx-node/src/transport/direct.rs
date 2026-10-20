@@ -10,7 +10,9 @@ use crate::error::*;
 use crate::transport::{Envelope, Transport, TransportStatus};
 use async_trait::async_trait;
 use lettre::transport::smtp::authentication::Credentials;
-use lettre::{Address, AsyncSmtpTransport, AsyncTransport, Envelope as LettreEnvelope, Tokio1Executor};
+use lettre::{
+    Address, AsyncSmtpTransport, AsyncTransport, Envelope as LettreEnvelope, Tokio1Executor,
+};
 use std::time::Duration;
 
 /// Default relay used when none is configured.
@@ -68,7 +70,8 @@ impl DirectTransport {
             .get("relay_port")
             .and_then(|p| p.parse::<u16>().ok())
             .unwrap_or(DEFAULT_PORT);
-        let security = RelaySecurity::parse(config.options.get("security")).unwrap_or(RelaySecurity::StartTls);
+        let security =
+            RelaySecurity::parse(config.options.get("security")).unwrap_or(RelaySecurity::StartTls);
         let credentials = match (
             config.options.get("username"),
             config.options.get("password"),
@@ -96,10 +99,8 @@ impl DirectTransport {
                 AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&self.relay)
                     .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?
             }
-            RelaySecurity::ImplicitTls => {
-                AsyncSmtpTransport::<Tokio1Executor>::relay(&self.relay)
-                    .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?
-            }
+            RelaySecurity::ImplicitTls => AsyncSmtpTransport::<Tokio1Executor>::relay(&self.relay)
+                .map_err(|e| TransportError::ConnectionFailed(e.to_string()))?,
         };
 
         let builder = builder
@@ -161,11 +162,8 @@ impl Transport for DirectTransport {
             return Err(TransportError::NotConnected.into());
         };
 
-        let from = Address::new(
-            envelope.sender.clone(),
-            envelope.sender.clone(),
-        )
-        .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        let from = Address::new(envelope.sender.clone(), envelope.sender.clone())
+            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
         let mut recipients = Vec::with_capacity(envelope.recipients.len());
         for recipient in &envelope.recipients {
@@ -175,10 +173,8 @@ impl Transport for DirectTransport {
             );
         }
 
-        let lettre_envelope =
-            LettreEnvelope::new(Some(from), recipients).map_err(|e| {
-                TransportError::SendFailed(e.to_string())
-            })?;
+        let lettre_envelope = LettreEnvelope::new(Some(from), recipients)
+            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
         match client.send_raw(&lettre_envelope, payload).await {
             Ok(_) => {
@@ -223,7 +219,10 @@ mod tests {
 
     #[test]
     fn uses_configured_relay() {
-        let transport = DirectTransport::new(config(&[("relay_host", "mail.example.org"), ("relay_port", "2525")]));
+        let transport = DirectTransport::new(config(&[
+            ("relay_host", "mail.example.org"),
+            ("relay_port", "2525"),
+        ]));
         let status = transport.status();
         assert_eq!(status.endpoint, "mail.example.org:2525");
         assert_eq!(status.id, "direct");

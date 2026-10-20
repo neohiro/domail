@@ -544,10 +544,10 @@ impl MxNodeConfig {
     /// Persist the configuration as pretty-printed JSON.
     pub fn save(&self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ConfigError::Write(e.to_string()))?;
+            std::fs::create_dir_all(parent).map_err(|e| ConfigError::Write(e.to_string()))?;
         }
-        let json = serde_json::to_string_pretty(self).map_err(|e| ConfigError::Write(e.to_string()))?;
+        let json =
+            serde_json::to_string_pretty(self).map_err(|e| ConfigError::Write(e.to_string()))?;
         std::fs::write(path, json).map_err(|e| ConfigError::Write(e.to_string()))?;
         Ok(())
     }

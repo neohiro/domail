@@ -26,8 +26,10 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::time::Duration;
-use tokio_tungstenite::{connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream};
 use tokio::net::TcpStream;
+use tokio_tungstenite::{
+    connect_async, tungstenite::Message as WsMessage, MaybeTlsStream, WebSocketStream,
+};
 use tracing::debug;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -133,10 +135,14 @@ impl NostrTransport {
     }
 
     /// Encrypt a payload for a recipient using NIP-04.
-    pub fn nip04_encrypt(secret: &[u8; 32], recipient: &[u8; 32], plaintext: &str) -> Result<Vec<u8>> {
+    pub fn nip04_encrypt(
+        secret: &[u8; 32],
+        recipient: &[u8; 32],
+        plaintext: &str,
+    ) -> Result<Vec<u8>> {
         let secp = Secp256k1::new();
-        let sk = SecretKey::from_slice(secret)
-            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        let sk =
+            SecretKey::from_slice(secret).map_err(|e| TransportError::SendFailed(e.to_string()))?;
         let xonly = XOnlyPublicKey::from_slice(recipient)
             .map_err(|e| TransportError::SendFailed(e.to_string()))?;
         // The x coordinate of the shared point is independent of the parity of
@@ -168,16 +174,11 @@ impl NostrTransport {
     }
 
     /// Decrypt a NIP-04 payload.
-    pub fn nip04_decrypt(
-        secret: &[u8; 32],
-        sender: &[u8; 32],
-        payload: &[u8],
-    ) -> Result<String> {
+    pub fn nip04_decrypt(secret: &[u8; 32], sender: &[u8; 32], payload: &[u8]) -> Result<String> {
         if payload.len() < IV_LEN + 32 {
-            return Err(TransportError::ReceiveFailed(
-                "NIP-04 payload is too short".to_string(),
-            )
-            .into());
+            return Err(
+                TransportError::ReceiveFailed("NIP-04 payload is too short".to_string()).into(),
+            );
         }
         let secp = Secp256k1::new();
         let sk = SecretKey::from_slice(secret)
@@ -223,8 +224,8 @@ impl NostrTransport {
         let content = base64::engine::general_purpose::STANDARD.encode(&payload);
 
         let secp = Secp256k1::new();
-        let sk = SecretKey::from_slice(secret)
-            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        let sk =
+            SecretKey::from_slice(secret).map_err(|e| TransportError::SendFailed(e.to_string()))?;
         let keypair = Keypair::from_secret_key(&secp, &sk);
         let (xonly, _parity) = keypair.x_only_public_key();
         let pubkey = hex_encode(&xonly.serialize());
@@ -300,15 +301,15 @@ fn decode_message(padded: &[u8]) -> Result<String> {
         }
         let available = chunk.len().saturating_sub(1).min(CHUNK_LEN);
         if len > available {
-            return Err(TransportError::ReceiveFailed(
-                "NIP-04 chunk is truncated".to_string(),
-            )
-            .into());
+            return Err(
+                TransportError::ReceiveFailed("NIP-04 chunk is truncated".to_string()).into(),
+            );
         }
         out.extend_from_slice(&chunk[1..=len]);
     }
-    String::from_utf8(out)
-        .map_err(|_| TransportError::ReceiveFailed("NIP-04 payload is not UTF-8".to_string()).into())
+    String::from_utf8(out).map_err(|_| {
+        TransportError::ReceiveFailed("NIP-04 payload is not UTF-8".to_string()).into()
+    })
 }
 
 /// AES-256-CBC encryption with PKCS#7 padding.
@@ -386,9 +387,8 @@ impl Transport for NostrTransport {
             return Ok(());
         }
         if self.secret_key.is_none() {
-            let error = TransportError::NotConfigured(
-                "nostr: no secret_key configured".to_string(),
-            );
+            let error =
+                TransportError::NotConfigured("nostr: no secret_key configured".to_string());
             self.last_error = Some(error.to_string());
             return Err(error.into());
         }
@@ -435,9 +435,7 @@ impl Transport for NostrTransport {
             .first()
             .ok_or_else(|| TransportError::SendFailed("no recipient to deliver to".to_string()))?;
         let recipient_key = self.pubkey_for(recipient).ok_or_else(|| {
-            TransportError::NotConfigured(format!(
-                "nostr: no public key known for {recipient}"
-            ))
+            TransportError::NotConfigured(format!("nostr: no public key known for {recipient}"))
         })?;
 
         let message = DirectMessage {
@@ -530,14 +528,18 @@ mod tests {
     fn message_padding_round_trip() {
         let message = b"a message that is exactly thirty two bytes long!!";
         let padded = encode_message(message);
-        assert_eq!(decode_message(&padded).unwrap(), String::from_utf8_lossy(message));
+        assert_eq!(
+            decode_message(&padded).unwrap(),
+            String::from_utf8_lossy(message)
+        );
     }
 
     #[test]
     fn event_is_signed_and_identified() {
         let sender = secret();
         let recipient = secret();
-        let (event, id) = NostrTransport::build_event(&sender, &recipient, "hi", 1_700_000_000).unwrap();
+        let (event, id) =
+            NostrTransport::build_event(&sender, &recipient, "hi", 1_700_000_000).unwrap();
         assert_eq!(event["kind"], 4);
         assert_eq!(event["id"], serde_json::Value::String(id.clone()));
         assert_eq!(event["sig"].as_str().unwrap().len(), 128);

@@ -174,15 +174,12 @@ impl Transport for DnsTransport {
 
         for (index, chunk) in chunks.iter().enumerate() {
             let name = self.query_name(chunk, index);
-            let url = format!(
-                "{}?name={}&type=TXT",
-                self.resolver,
-                urlencode(&name)
-            );
+            let url = format!("{}?name={}&type=TXT", self.resolver, urlencode(&name));
 
-            let response = client.get(&url).send().await.map_err(|e| {
-                TransportError::SendFailed(format!("resolver query failed: {e}"))
-            })?;
+            let response =
+                client.get(&url).send().await.map_err(|e| {
+                    TransportError::SendFailed(format!("resolver query failed: {e}"))
+                })?;
 
             let body = response.text().await.map_err(|e| {
                 TransportError::SendFailed(format!("resolver body unreadable: {e}"))
@@ -198,10 +195,9 @@ impl Transport for DnsTransport {
         }
 
         if sent == 0 {
-            return Err(TransportError::SendFailed(
-                "message produced no DNS chunks".to_string(),
-            )
-            .into());
+            return Err(
+                TransportError::SendFailed("message produced no DNS chunks".to_string()).into(),
+            );
         }
 
         let _ = envelope;
@@ -224,9 +220,7 @@ fn urlencode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     for byte in input.as_bytes() {
         match byte {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => {
-                out.push(*byte as char)
-            }
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' => out.push(*byte as char),
             _ => out.push_str(&format!("%{byte:02X}")),
         }
     }

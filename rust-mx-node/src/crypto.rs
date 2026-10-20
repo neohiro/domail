@@ -4,11 +4,13 @@ use crate::error::*;
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, Key, KeyInit, Nonce};
-use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey, Verifier};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use x25519_dalek::{PublicKey as X25519PublicKey, SharedSecret, StaticSecret as X25519StaticSecret};
+use x25519_dalek::{
+    PublicKey as X25519PublicKey, SharedSecret, StaticSecret as X25519StaticSecret,
+};
 use zeroize::ZeroizeOnDrop;
 
 /// Length of the derived symmetric keys in bytes.
@@ -33,8 +35,13 @@ impl MasterKey {
         let argon2 = Argon2::new(
             Algorithm::Argon2id,
             Version::V0x13,
-            Params::new(params.memory_kb, params.time, params.parallelism, Some(KEY_LEN))
-                .map_err(|e| CryptoError::KeyDerivation(e.to_string()))?,
+            Params::new(
+                params.memory_kb,
+                params.time,
+                params.parallelism,
+                Some(KEY_LEN),
+            )
+            .map_err(|e| CryptoError::KeyDerivation(e.to_string()))?,
         );
 
         argon2
@@ -91,7 +98,12 @@ impl EncryptedData {
         let mut salt = [0u8; SALT_LEN];
         OsRng.fill_bytes(&mut salt);
 
-        let key = derive_key(master_key.as_bytes(), &salt, b"domail-mx-node-record", KEY_LEN)?;
+        let key = derive_key(
+            master_key.as_bytes(),
+            &salt,
+            b"domail-mx-node-record",
+            KEY_LEN,
+        )?;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
 
         let mut nonce = [0u8; NONCE_LEN];
@@ -110,7 +122,12 @@ impl EncryptedData {
 
     /// Decrypt data with a master key
     pub fn decrypt(&self, master_key: &MasterKey) -> Result<Vec<u8>> {
-        let key = derive_key(master_key.as_bytes(), &self.salt, b"domail-mx-node-record", KEY_LEN)?;
+        let key = derive_key(
+            master_key.as_bytes(),
+            &self.salt,
+            b"domail-mx-node-record",
+            KEY_LEN,
+        )?;
         let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
         cipher
             .decrypt(Nonce::from_slice(&self.nonce), self.ciphertext.as_ref())
@@ -163,8 +180,8 @@ impl Ed25519KeyPair {
 
     /// Verify a signature
     pub fn verify(pubkey: &VerifyingKey, msg: &[u8], sig: &[u8]) -> Result<()> {
-        let sig = Signature::from_slice(sig)
-            .map_err(|e| CryptoError::InvalidKeyFormat(e.to_string()))?;
+        let sig =
+            Signature::from_slice(sig).map_err(|e| CryptoError::InvalidKeyFormat(e.to_string()))?;
         pubkey
             .verify_strict(msg, &sig)
             .map_err(|e| CryptoError::Verification(e.to_string()))
@@ -306,7 +323,10 @@ pub fn decrypt_for_recipient(
 
     let cipher = ChaCha20Poly1305::new(Key::from_slice(&key));
     cipher
-        .decrypt(Nonce::from_slice(&encrypted.nonce), encrypted.ciphertext.as_ref())
+        .decrypt(
+            Nonce::from_slice(&encrypted.nonce),
+            encrypted.ciphertext.as_ref(),
+        )
         .map_err(|e| CryptoError::Decryption(e.to_string()))
 }
 
@@ -357,7 +377,8 @@ mod tests {
 
     #[test]
     fn test_encryption() {
-        let master = MasterKey::derive("test passphrase", b"salt12345678", &cheap_params()).unwrap();
+        let master =
+            MasterKey::derive("test passphrase", b"salt12345678", &cheap_params()).unwrap();
         let data = b"Hello, World!";
         let encrypted = EncryptedData::encrypt(data, &master).unwrap();
         let decrypted = encrypted.decrypt(&master).unwrap();
@@ -366,7 +387,8 @@ mod tests {
 
     #[test]
     fn encrypted_records_use_distinct_keys() {
-        let master = MasterKey::derive("test passphrase", b"salt12345678", &cheap_params()).unwrap();
+        let master =
+            MasterKey::derive("test passphrase", b"salt12345678", &cheap_params()).unwrap();
         let a = EncryptedData::encrypt(b"same plaintext", &master).unwrap();
         let b = EncryptedData::encrypt(b"same plaintext", &master).unwrap();
         assert_ne!(a.salt, b.salt);
@@ -388,8 +410,7 @@ mod tests {
         let recipient = X25519KeyPair::generate();
         let encrypted =
             encrypt_for_recipient(b"secret message", recipient.public_key(), &sender).unwrap();
-        let decrypted =
-            decrypt_for_recipient(&encrypted, &recipient, sender.public_key()).unwrap();
+        let decrypted = decrypt_for_recipient(&encrypted, &recipient, sender.public_key()).unwrap();
         assert_eq!(b"secret message", &decrypted[..]);
     }
 

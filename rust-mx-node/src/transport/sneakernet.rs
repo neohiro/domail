@@ -169,10 +169,8 @@ mod tests {
 
     #[tokio::test]
     async fn writes_a_drop_file() {
-        let dir = std::env::temp_dir().join(format!(
-            "domail-sneakernet-test-{}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("domail-sneakernet-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
 
         let mut transport = SneakernetTransport::new(TransportConfig {

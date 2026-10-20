@@ -248,7 +248,11 @@ impl SmtpServer {
     pub async fn serve(self) -> Result<()> {
         let listener = match self.listener.lock().await.take() {
             Some(listener) => listener,
-            None => return Err(MxNodeError::InvalidState("the server was not started".into())),
+            None => {
+                return Err(MxNodeError::InvalidState(
+                    "the server was not started".into(),
+                ))
+            }
         };
 
         let mut stop = self.stop_signal.subscribe();
@@ -289,7 +293,12 @@ impl SmtpServer {
 
     /// Address the server is bound to, if it is running.
     pub async fn local_addr(&self) -> Option<SocketAddr> {
-        self.listener.lock().await.as_ref().map(|l| l.local_addr().ok()).flatten()
+        self.listener
+            .lock()
+            .await
+            .as_ref()
+            .map(|l| l.local_addr().ok())
+            .flatten()
     }
 }
 
@@ -380,7 +389,9 @@ impl Session {
 
             let count = match read {
                 Err(_) => {
-                    let _ = self.reply("421 4.4.2 Idle timeout, closing connection").await;
+                    let _ = self
+                        .reply("421 4.4.2 Idle timeout, closing connection")
+                        .await;
                     return Ok(());
                 }
                 Ok(Err(e)) => {
@@ -428,15 +439,21 @@ impl Session {
                 }
                 "NOOP" => self.reply("250 2.0.0 Ok").await?,
                 "VRFY" => {
-                    self.reply("252 2.5.2 Cannot VRFY user, but will accept message and attempt delivery")
-                        .await?
+                    self.reply(
+                        "252 2.5.2 Cannot VRFY user, but will accept message and attempt delivery",
+                    )
+                    .await?
                 }
                 "HELP" => {
-                    self.reply("214 2.0.0 See RFC 5321 for the command set").await?
+                    self.reply("214 2.0.0 See RFC 5321 for the command set")
+                        .await?
                 }
                 "QUIT" => {
-                    self.reply(&format!("221 2.0.0 {} closing connection", self.context.hostname))
-                        .await?;
+                    self.reply(&format!(
+                        "221 2.0.0 {} closing connection",
+                        self.context.hostname
+                    ))
+                    .await?;
                     return Ok(());
                 }
                 "" => {}
@@ -450,10 +467,7 @@ impl Session {
 
     /// Send a single line response.
     async fn reply(&mut self, line: &str) -> Result<()> {
-        self.stream
-            .write_line(line)
-            .await
-            .map_err(MxNodeError::Io)
+        self.stream.write_line(line).await.map_err(MxNodeError::Io)
     }
 
     /// Enforce the per minute command limit.
@@ -489,10 +503,7 @@ impl Session {
         self.state = SessionState::Greeted;
 
         let mut lines = vec![format!("250-{} Hello", self.context.hostname)];
-        lines.push(format!(
-            "250-SIZE {}",
-            self.context.config.max_message_size
-        ));
+        lines.push(format!("250-SIZE {}", self.context.config.max_message_size));
         lines.push("250-8BITMIME".to_string());
         lines.push("250-PIPELINING".to_string());
         lines.push("250-ENHANCEDSTATUSCODES".to_string());
@@ -507,7 +518,9 @@ impl Session {
             lines.push("250-AUTH PLAIN LOGIN".to_string());
         }
 
-        let last = lines.pop().unwrap_or_else(|| format!("250 {}", self.context.hostname));
+        let last = lines
+            .pop()
+            .unwrap_or_else(|| format!("250 {}", self.context.hostname));
         let body = format!("{}\r\n{}", lines.join("\r\n"), last);
         self.stream
             .write_all(body.as_bytes())
@@ -533,7 +546,8 @@ impl Session {
         }
 
         let Some(acceptor) = self.context.tls_acceptor.clone() else {
-            self.reply("454 4.7.0 TLS is not available on this server").await?;
+            self.reply("454 4.7.0 TLS is not available on this server")
+                .await?;
             return Ok(());
         };
 
@@ -602,7 +616,10 @@ impl Session {
                     self.pending_auth = Some(AuthStep::LoginUser);
                 }
             },
-            _ => self.reply("504 5.5.4 Unrecognized authentication type").await?,
+            _ => {
+                self.reply("504 5.5.4 Unrecognized authentication type")
+                    .await?
+            }
         }
 
         Ok(())
@@ -612,7 +629,8 @@ impl Session {
     async fn continue_auth(&mut self, line: &str) -> Result<()> {
         if line.trim() == "*" {
             self.pending_auth = None;
-            self.reply("501 5.7.0 Authentication cancelled by client").await?;
+            self.reply("501 5.7.0 Authentication cancelled by client")
+                .await?;
             return Ok(());
         }
 
@@ -666,7 +684,8 @@ impl Session {
             }
             None => {
                 self.pending_auth = None;
-                self.reply("535 5.7.8 Authentication credentials invalid").await
+                self.reply("535 5.7.8 Authentication credentials invalid")
+                    .await
             }
         }
     }
@@ -679,12 +698,12 @@ impl Session {
         self.data.clear();
         self.data_overflow = false;
     }
-}
 
     /// Check whether the session may carry mail.
     async fn security_ok(&mut self) -> Result<bool> {
         if self.context.config.require_starttls && !self.stream.is_tls() {
-            self.reply("530 5.7.0 Must issue a STARTTLS command first").await?;
+            self.reply("530 5.7.0 Must issue a STARTTLS command first")
+                .await?;
             return Ok(false);
         }
         if self.context.mode.requires_auth() && self.authenticated.is_none() {
@@ -920,7 +939,10 @@ impl Session {
                         .unwrap_or_default(),
                     body_html: parsed.body_html(0).map(|html| html.into_owned()),
                     headers,
-                    date: parsed.date().map(|date| date.to_timestamp()).unwrap_or_else(now),
+                    date: parsed
+                        .date()
+                        .map(|date| date.to_timestamp())
+                        .unwrap_or_else(now),
                     read: false,
                     flagged: false,
                     deleted: false,

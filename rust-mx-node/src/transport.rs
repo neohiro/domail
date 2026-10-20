@@ -339,8 +339,21 @@ mod tests {
     #[tokio::test]
     async fn registers_every_known_transport() {
         let ids = [
-            "direct", "tor", "i2p", "ens", "radicle", "yggdrasil", "nostr", "reticulum",
-            "webrtc", "ble", "lora", "packet_radio", "dns", "sneakernet", "federation",
+            "direct",
+            "tor",
+            "i2p",
+            "ens",
+            "radicle",
+            "yggdrasil",
+            "nostr",
+            "reticulum",
+            "webrtc",
+            "ble",
+            "lora",
+            "packet_radio",
+            "dns",
+            "sneakernet",
+            "federation",
         ];
         for id in ids {
             let transport = create_transport(config(id)).expect("transport");

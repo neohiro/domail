@@ -78,7 +78,13 @@ impl StorageBackend for MemoryStorage {
     }
 
     async fn size(&self) -> Result<u64> {
-        Ok(self.data.read().await.values().map(|v| v.len() as u64).sum())
+        Ok(self
+            .data
+            .read()
+            .await
+            .values()
+            .map(|v| v.len() as u64)
+            .sum())
     }
 
     async fn close(&self) -> Result<()> {
@@ -99,8 +105,9 @@ impl FileStorage {
     /// Create (or open) a file store rooted at `root`.
     pub fn new(root: impl AsRef<Path>, max_size: u64) -> Result<Self> {
         let root = root.as_ref().to_path_buf();
-        std::fs::create_dir_all(&root)
-            .map_err(|e| StorageError::Database(format!("cannot create {}: {e}", root.display())))?;
+        std::fs::create_dir_all(&root).map_err(|e| {
+            StorageError::Database(format!("cannot create {}: {e}", root.display()))
+        })?;
         Ok(Self { root, max_size })
     }
 
@@ -109,8 +116,7 @@ impl FileStorage {
     }
 
     fn key_for(&self, file_name: &str) -> Option<String> {
-        hex_decode(file_name)
-            .and_then(|bytes| String::from_utf8(bytes).ok())
+        hex_decode(file_name).and_then(|bytes| String::from_utf8(bytes).ok())
     }
 }
 
@@ -330,7 +336,9 @@ impl MailboxStorage {
 
     /// Mailbox this store is bound to.
     pub fn mailbox(&self) -> &str {
-        self.prefix.trim_start_matches("mbox:").trim_end_matches(':')
+        self.prefix
+            .trim_start_matches("mbox:")
+            .trim_end_matches(':')
     }
 
     pub async fn save(&self, msg: &StoredMessage) -> Result<()> {
@@ -420,8 +428,8 @@ impl ContactStorage {
 
     pub async fn save(&self, contact: &Contact) -> Result<()> {
         let key = format!("contact:{}", contact.address);
-        let data = bincode::serialize(contact)
-            .map_err(|e| StorageError::Serialization(e.to_string()))?;
+        let data =
+            bincode::serialize(contact).map_err(|e| StorageError::Serialization(e.to_string()))?;
         self.storage.put(&key, &data).await
     }
 

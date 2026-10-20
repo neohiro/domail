@@ -63,10 +63,7 @@ mod tests {
 
     fn self_signed() -> (String, String) {
         let certified = rcgen::generate_simple_self_signed(vec!["mx.test".to_string()]).unwrap();
-        (
-            certified.cert.pem(),
-            certified.key_pair.serialize_pem(),
-        )
+        (certified.cert.pem(), certified.key_pair.serialize_pem())
     }
 
     #[test]

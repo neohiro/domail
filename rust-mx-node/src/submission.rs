@@ -69,7 +69,11 @@ impl SubmissionServer {
     pub async fn serve(self) -> Result<()> {
         let plain = match self.plain.lock().await.take() {
             Some(listener) => listener,
-            None => return Err(MxNodeError::InvalidState("the server was not started".into())),
+            None => {
+                return Err(MxNodeError::InvalidState(
+                    "the server was not started".into(),
+                ))
+            }
         };
         let implicit = self.implicit.lock().await.take();
 

@@ -211,14 +211,12 @@ mod platform {
         }
 
         let stop = Arc::clone(&stop);
-        service_control_handler::register(config.name.as_str(), move |control| {
-            match control {
-                ServiceControl::Stop | ServiceControl::Shutdown => {
-                    let _ = stop.send(true);
-                    ServiceControlHandlerResult::NoError
-                }
-                _ => ServiceControlHandlerResult::NoError,
+        service_control_handler::register(config.name.as_str(), move |control| match control {
+            ServiceControl::Stop | ServiceControl::Shutdown => {
+                let _ = stop.send(true);
+                ServiceControlHandlerResult::NoError
             }
+            _ => ServiceControlHandlerResult::NoError,
         })
         .map_err(|e| MxNodeError::Service(ServiceError::Failed(e.to_string())))?;
 
@@ -240,7 +238,11 @@ mod platform {
         let file = format!("{}.service", config.name);
         if config.user_scope {
             let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-            PathBuf::from(home).join(".config").join("systemd").join("user").join(file)
+            PathBuf::from(home)
+                .join(".config")
+                .join("systemd")
+                .join("user")
+                .join(file)
         } else {
             PathBuf::from("/etc/systemd/system").join(file)
         }

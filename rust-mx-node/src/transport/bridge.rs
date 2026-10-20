@@ -66,7 +66,10 @@ impl BridgeMessage {
 }
 
 /// Write a length-prefixed frame.
-pub async fn write_frame<W: AsyncWrite + Unpin>(writer: &mut W, payload: &[u8]) -> std::io::Result<()> {
+pub async fn write_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    payload: &[u8],
+) -> std::io::Result<()> {
     if payload.len() > MAX_FRAME_LEN {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -291,17 +294,15 @@ impl BridgeTransport {
                     ))
                     .into());
                 }
-                let stream = timeout(
-                    CONNECT_TIMEOUT,
-                    TcpStream::connect(self.endpoint.trim()),
-                )
-                .await
-                .map_err(|_| {
-                    TransportError::ConnectionFailed(format!("{}: connection timed out", self.id))
-                })?
-                .map_err(|e| {
-                    TransportError::ConnectionFailed(format!("{}: {e}", self.id))
-                })?;
+                let stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(self.endpoint.trim()))
+                    .await
+                    .map_err(|_| {
+                        TransportError::ConnectionFailed(format!(
+                            "{}: connection timed out",
+                            self.id
+                        ))
+                    })?
+                    .map_err(|e| TransportError::ConnectionFailed(format!("{}: {e}", self.id)))?;
                 debug!(transport = %self.id, endpoint = %self.endpoint, "bridge connected");
                 Ok(Connection::Stream(Box::new(stream)))
             }
@@ -333,9 +334,10 @@ impl BridgeTransport {
                             pass.as_str(),
                         )
                     }
-                    _ => {
-                        tokio_socks::tcp::Socks5Stream::connect(proxy.as_str(), (host.as_str(), port))
-                    }
+                    _ => tokio_socks::tcp::Socks5Stream::connect(
+                        proxy.as_str(),
+                        (host.as_str(), port),
+                    ),
                 };
 
                 let stream = timeout(CONNECT_TIMEOUT, connect)
@@ -343,9 +345,7 @@ impl BridgeTransport {
                     .map_err(|_| {
                         TransportError::ConnectionFailed(format!("{}: proxy timed out", self.id))
                     })?
-                    .map_err(|e| {
-                        TransportError::ConnectionFailed(format!("{}: {e}", self.id))
-                    })?;
+                    .map_err(|e| TransportError::ConnectionFailed(format!("{}: {e}", self.id)))?;
                 debug!(transport = %self.id, endpoint = %self.endpoint, "bridge connected via proxy");
                 Ok(Connection::Stream(Box::new(stream)))
             }
@@ -362,9 +362,7 @@ impl BridgeTransport {
                     .map_err(|_| {
                         TransportError::ConnectionFailed(format!("{}: connect timed out", self.id))
                     })?
-                    .map_err(|e| {
-                        TransportError::ConnectionFailed(format!("{}: {e}", self.id))
-                    })?;
+                    .map_err(|e| TransportError::ConnectionFailed(format!("{}: {e}", self.id)))?;
                 Ok(Connection::WebSocket(stream))
             }
             Mode::I2pSam { sam, destination } => {
@@ -378,11 +376,12 @@ impl BridgeTransport {
                 let mut stream = timeout(CONNECT_TIMEOUT, TcpStream::connect(sam.as_str()))
                     .await
                     .map_err(|_| {
-                        TransportError::ConnectionFailed(format!("{}: SAM bridge timed out", self.id))
+                        TransportError::ConnectionFailed(format!(
+                            "{}: SAM bridge timed out",
+                            self.id
+                        ))
                     })?
-                    .map_err(|e| {
-                        TransportError::ConnectionFailed(format!("{}: {e}", self.id))
-                    })?;
+                    .map_err(|e| TransportError::ConnectionFailed(format!("{}: {e}", self.id)))?;
 
                 // SAM handshake: greet, then open a streaming session.
                 stream
@@ -419,8 +418,8 @@ impl BridgeTransport {
 
     async fn write_message(&mut self, envelope: &Envelope, payload: &[u8]) -> Result<()> {
         let message = BridgeMessage::new(envelope, payload);
-        let encoded = serde_json::to_vec(&message)
-            .map_err(|e| TransportError::SendFailed(e.to_string()))?;
+        let encoded =
+            serde_json::to_vec(&message).map_err(|e| TransportError::SendFailed(e.to_string()))?;
 
         let Some(connection) = self.connection.as_mut() else {
             return Err(TransportError::NotConnected.into());
