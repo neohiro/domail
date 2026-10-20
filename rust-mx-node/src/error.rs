@@ -7,52 +7,58 @@ use thiserror::Error;
 pub enum MxNodeError {
     #[error("Configuration error: {0}")]
     Config(#[from] ConfigError),
-    
+
     #[error("Crypto error: {0}")]
     Crypto(#[from] CryptoError),
-    
+
     #[error("Storage error: {0}")]
     Storage(#[from] StorageError),
-    
+
     #[error("SMTP error: {0}")]
     Smtp(#[from] SmtpError),
-    
+
     #[error("IMAP error: {0}")]
     Imap(#[from] ImapError),
-    
+
     #[error("Submission error: {0}")]
     Submission(#[from] SubmissionError),
-    
+
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
-    
+
+    #[error("Control API error: {0}")]
+    Control(#[from] ControlError),
+
+    #[error("Service error: {0}")]
+    Service(#[from] ServiceError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("TLS error: {0}")]
     Tls(String),
-    
+
     #[error("Protocol error: {0}")]
     Protocol(String),
-    
+
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
-    
+
     #[error("Rate limited")]
     RateLimited,
-    
+
     #[error("Message too large: {size} bytes (max {max})")]
     MessageTooLarge { size: usize, max: usize },
-    
+
     #[error("Not running")]
     NotRunning,
-    
+
     #[error("Already running")]
     AlreadyRunning,
-    
+
     #[error("Invalid state: {0}")]
     InvalidState(String),
-    
+
     #[error("WASM error: {0}")]
     Wasm(String),
 }
@@ -62,21 +68,36 @@ pub enum MxNodeError {
 pub enum ConfigError {
     #[error("Invalid hostname")]
     InvalidHostname,
-    
+
+    #[error("Invalid domain: {0}")]
+    InvalidDomain(String),
+
     #[error("Missing certificate or key")]
     MissingCertKey,
-    
+
     #[error("Invalid certificate format")]
     InvalidCertFormat,
-    
+
     #[error("Invalid private key format")]
     InvalidKeyFormat,
-    
+
     #[error("Invalid transport configuration: {0}")]
     InvalidTransport(String),
-    
+
     #[error("Port already in use: {0}")]
     PortInUse(u16),
+
+    #[error("Config file not found: {0}")]
+    NotFound(String),
+
+    #[error("Config file could not be parsed: {0}")]
+    Parse(String),
+
+    #[error("Config file could not be written: {0}")]
+    Write(String),
+
+    #[error("No credentials configured")]
+    NoCredentials,
 }
 
 /// Crypto errors
@@ -84,25 +105,25 @@ pub enum ConfigError {
 pub enum CryptoError {
     #[error("Key generation failed: {0}")]
     KeyGen(String),
-    
+
     #[error("Encryption failed: {0}")]
     Encryption(String),
-    
+
     #[error("Decryption failed: {0}")]
     Decryption(String),
-    
+
     #[error("Signing failed: {0}")]
     Signing(String),
-    
+
     #[error("Verification failed: {0}")]
     Verification(String),
-    
+
     #[error("Key derivation failed: {0}")]
     KeyDerivation(String),
-    
+
     #[error("Invalid key format: {0}")]
     InvalidKeyFormat(String),
-    
+
     #[error("Algorithm not supported: {0}")]
     UnsupportedAlgorithm(String),
 }
@@ -112,22 +133,22 @@ pub enum CryptoError {
 pub enum StorageError {
     #[error("Database error: {0}")]
     Database(String),
-    
+
     #[error("Serialization error: {0}")]
     Serialization(String),
-    
+
     #[error("Deserialization error: {0}")]
     Deserialization(String),
-    
+
     #[error("Not found: {0}")]
     NotFound(String),
-    
+
     #[error("Already exists: {0}")]
     AlreadyExists(String),
-    
+
     #[error("Quota exceeded")]
     QuotaExceeded,
-    
+
     #[error("Corruption detected: {0}")]
     Corruption(String),
 }
@@ -137,34 +158,34 @@ pub enum StorageError {
 pub enum SmtpError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("HELO/EHLO failed: {0}")]
     HeloFailed(String),
-    
+
     #[error("STARTTLS failed: {0}")]
     StartTlsFailed(String),
-    
+
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
-    
+
     #[error("MAIL FROM failed: {0}")]
     MailFromFailed(String),
-    
+
     #[error("RCPT TO failed: {0}")]
     RcptToFailed(String),
-    
+
     #[error("DATA failed: {0}")]
     DataFailed(String),
-    
+
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
-    
+
     #[error("Timeout")]
     Timeout,
-    
+
     #[error("TLS required")]
     TlsRequired,
-    
+
     #[error("Authentication required")]
     AuthRequired,
 }
@@ -174,22 +195,22 @@ pub enum SmtpError {
 pub enum ImapError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
-    
+
     #[error("Mailbox not found: {0}")]
     MailboxNotFound(String),
-    
+
     #[error("Message not found: {0}")]
     MessageNotFound(String),
-    
+
     #[error("Invalid command: {0}")]
     InvalidCommand(String),
-    
+
     #[error("Parse error: {0}")]
     ParseError(String),
-    
+
     #[error("Timeout")]
     Timeout,
 }
@@ -199,22 +220,22 @@ pub enum ImapError {
 pub enum SubmissionError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Authentication failed: {0}")]
     AuthFailed(String),
-    
+
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
-    
+
     #[error("Recipient rejected: {0}")]
     RecipientRejected(String),
-    
+
     #[error("Sender rejected: {0}")]
     SenderRejected(String),
-    
+
     #[error("TLS required")]
     TlsRequired,
-    
+
     #[error("Authentication required")]
     AuthRequired,
 }
@@ -224,21 +245,68 @@ pub enum SubmissionError {
 pub enum TransportError {
     #[error("Connection failed: {0}")]
     ConnectionFailed(String),
-    
+
     #[error("Send failed: {0}")]
     SendFailed(String),
-    
+
     #[error("Receive failed: {0}")]
     ReceiveFailed(String),
-    
+
     #[error("Not connected")]
     NotConnected,
-    
+
     #[error("Unsupported transport: {0}")]
     UnsupportedTransport(String),
-    
+
     #[error("Handshake failed: {0}")]
     HandshakeFailed(String),
+
+    #[error("Transport is not configured: {0}")]
+    NotConfigured(String),
+}
+
+/// Control API errors
+#[derive(Error, Debug)]
+pub enum ControlError {
+    #[error("Invalid request: {0}")]
+    BadRequest(String),
+
+    #[error("Unauthorized")]
+    Unauthorized,
+
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
+    #[error("Not found: {0}")]
+    NotFound(String),
+
+    #[error("Method not allowed: {0}")]
+    MethodNotAllowed(String),
+
+    #[error("Payload too large: {0}")]
+    PayloadTooLarge(usize),
+
+    #[error("Malformed request: {0}")]
+    Malformed(String),
+}
+
+/// OS service errors
+#[derive(Error, Debug)]
+pub enum ServiceError {
+    #[error("Unsupported platform: {0}")]
+    UnsupportedPlatform(String),
+
+    #[error("Service is not installed")]
+    NotInstalled,
+
+    #[error("Service is already installed")]
+    AlreadyInstalled,
+
+    #[error("Service operation failed: {0}")]
+    Failed(String),
+
+    #[error("Insufficient privileges: {0}")]
+    InsufficientPrivileges(String),
 }
 
 /// Result type alias
